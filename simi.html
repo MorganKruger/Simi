@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      background-color: linen;
+      display: grid;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #main {
+      /* height: 100%;
+      width: 100%; */
+      display: grid;
+      grid-template-rows: auto auto;
+      /* margin: 5rem; */
+      background-color: white;
+      /* border: 1px solid gray; */
+      border-collapse: collapse;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="main">
+    <canvas id="canvas" width="1600" height="900" style="pointer-events: none;"></canvas>
+  </div>
+
+  <script defer>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const FPS = 60;
+    const keys = {};
+    const version = "v0.3.3";
+
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      size: 10,
+      xVelocity: 0,
+      yVelocity: 0,
+      acceleration: 2,
+      friction: 2,
+      maxVelocity: 14,
+      color: "rgb(255, 0, 0, 1)",
+    }
+
+    let scene = "main";
+    let sceneDoors = {"main":"shop"};
+
+    let shopFocus;
+    const shopButtonSize = 50;
+
+    let points = 100000000;
+    let pointsMult = 1;
+    let seeds = 1000000;
+    let particleBase = 1; // points from targets
+    const particleSize = 8;
+
+    let normalParticleTime = 2;
+    let breadthSizeBonus = 10; // increase target breadth effectiveness on average
+    let minimumTargetSize = 30;
+    let breadthBonus = 5; // points from target breadth
+    let potencyBonus = 10; // points from target potency
+
+    let minimumPotency = 0; // minimum potency (1=100%)
+    let maxNormalPotency = .3; // maximum potency (1=100%)
+    let superPotentChance = .05; // chance for 100% potency (1=100%)
+    let superPotentValue = 3 // amount of bonus particles for super potency
+
+    const targets = [];
+    const specialTargets = [];
+    const autoCollectTargets = [];
+    const gardenTargets = [];
+
+    const particles = [];
+    const shopParticles = [];
+    const gardenParticles = [];
+
+    let maxTargets = 10; // (prevents lag and balances gameplay)
+    let targetChance = .01; // chance for a new target to appear each frame (1=100%)
+
+    let maxSpecialTargets = 1; // (balances gameplay)
+    let specialTargetRateMult = 1; // increases the rate of all special target appearances
+
+    let darkTargetUnlocked = false;
+    let darkTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
+    let darkTargetConfettiMult = 1; // amount of particles from dark targets
+
+    let explosiveTargetUnlocked = false;
+    let explosiveTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
+    let minExplosiveConfetti = 40;
+
+    let goldTargetUnlocked = false;
+    let goldTargetChance = .0005; // chance for a new gold target to appear each frame (1=100%)
+    let goldTargetDecay = 1; // size reduction per frame of the gold target
+    let goldTargetSize = 50; // size reduction per frame of the gold target
+    const goldTargetMinSize = 25; // minimum size before a gold target disappears
+    let goldTargetDrop = 1; // gold target shoots 2 particles per frame instead of 1
+    let goldAutoCollect = false; 87
+
+    let gardenIsUnlocked = false; // boolean determines whether the garden is enabled
+    let gardenPlanting = 1; // the amount of crops that can be planted in a row at once
+    const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
+    let cropGrowthChance = .0005; // chance for garden crops to increase in their 'growth' value by some amount
+    const maxCropSize = 28; // maximum physical size for crop display and collision
+    let cropHarvestBonus = 0; // multiplies the amount of seeds harvested from garden crops
+    let gardenStrips = 0; // sum count of garden strips across all plots
+    let rabbitSpeed = 15; // max rabbit speed
+
+    let shopItems = [
+      {
+        title: "+1 Drop Per Target",
+        level: 0,
+        maxLevel: 14,
+        price: 20,
+        x: undefined,
+        y: undefined,
+        detail: particleBase,
+        onPurchase: function () {
+          if (this.level == 1) {
+            shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+              title: "+10 Max Targets",
+              level: 0,
+              maxLevel: 14,
+              price: 100,
+              x: undefined,
+              y: undefined,
+              detail: maxTargets,
+              onPurchase: function () {
+                if (this.level == 1) {
+                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                    title: "+5% Max Potency",
+                    level: 0,
+                    maxLevel: 10,
+                    price: 100,
+                    x: undefined,
+                    y: undefined,
+                    detail: `${Math.round(maxNormalPotency * 100)}%`,
+                    onPurchase: function () {
+                      if (this.level == 1) {
+                        shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                          title: "+1% Super Potent Chance",
+                          level: 0,
+                          maxLevel: 25,
+                          price: 50,
+                          x: undefined,
+                          y: undefined,
+                          detail: `${Math.round(superPotentChance * 100)}%`,
+                          onPurchase: function () {
+                            superPotentChance += .01;
+                            this.price += 50;
+                            this.detail = `${Math.round(superPotentChance * 100)}%`;
+
+                            if (this.level == this.maxLevel) {
+                              this.detail = null;
+                              this.title = `${Math.round(superPotentChance * 100)}% Super Potent Chance`;
+                            }
+                          }
+                        });
+                      }
+                      this.price += 200;
+                      maxNormalPotency += .05;
+                      this.detail = `${Math.round(maxNormalPotency * 100)}%`;
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
+                      }
+                    }
+                  });
+                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                    title: "+2 Max Target Width",
+                    level: 0,
+                    maxLevel: 40,
+                    price: 50,
+                    x: undefined,
+                    y: undefined,
+                    detail: breadthSizeBonus,
+                    onPurchase: function () {
+                      this.price += 50;
+                      breadthSizeBonus += 2;
+                      this.detail = breadthSizeBonus;
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `+${breadthSizeBonus} Max Target Width`;
+                      }
+                    }
+                  });
+                  shopItems.splice(shopItems.length, 0, {
+                    title: "Unlock Garden Area",
+                    level: 0,
+                    maxLevel: 1,
+                    price: 250,
+                    x: undefined,
+                    y: undefined,
+                    onPurchase: function () {
+                      gardenIsUnlocked = true;
+                      sceneDoors["garden"] = "farmers market";
+                      this.title = "Garden Unlocked"
+                    }
+                  });
+                }
+                this.price = Math.round(this.price * 1.9);
+                maxTargets += 10;
+                this.detail = maxTargets;
+
+                if (this.level + shopItems[shopItems.indexOf(this) - 1].level == 8) {
+                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                    title: "x2 Target Spawn Rate",
+                    level: 0,
+                    maxLevel: 6,
+                    price: 100,
+                    x: undefined,
+                    y: undefined,
+                    detail: `${Math.round(targetChance * 100)}%`,
+                    onPurchase: function () {
+                      if (this.level == 1) {
+                        shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                          title: "Unlock Explosive Target",
+                          level: 0,
+                          maxLevel: 1,
+                          price: 200,
+                          x: undefined,
+                          y: undefined,
+                          detail: null,
+                          onPurchase: function () {
+                            explosiveTargetUnlocked = true;
+
+                            shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                              title: "Unlock Dark Target",
+                              level: 0,
+                              maxLevel: 1,
+                              price: 500,
+                              x: undefined,
+                              y: undefined,
+                              detail: null,
+                              onPurchase: function () {
+                                if (this.level == 1) {
+                                  darkTargetUnlocked = true;
+
+                                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                                    title: "Unlock Gold Target",
+                                    level: 0,
+                                    maxLevel: 1,
+                                    price: 1000,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: null,
+                                    onPurchase: function () {
+                                      if (this.level == 1) {
+                                        goldTargetUnlocked = true;
+
+                                        shopItems.splice(shopItems.indexOf(this), 0, {
+                                          title: "2x Gold Target Drop",
+                                          level: 0,
+                                          maxLevel: 2,
+                                          price: 5000,
+                                          x: undefined,
+                                          y: undefined,
+                                          detail: goldTargetDrop,
+                                          onPurchase: function () {
+                                            goldTargetDrop *= 2;
+                                            this.price *= 5;
+                                            this.detail = goldTargetDrop;
+
+                                            if (this.level == this.maxLevel) {
+                                              this.detail = null;
+                                              this.title = `x${goldTargetDrop} Gold Target Drops`;
+                                            }
+                                          }
+                                        });
+
+                                        shopItems.splice(shopItems.indexOf(this), 0, {
+                                          title: "Easy-Collect Gold",
+                                          level: 0,
+                                          maxLevel: 1,
+                                          price: 10000,
+                                          x: undefined,
+                                          y: undefined,
+                                          detail: null,
+                                          onPurchase: function () {
+                                            goldAutoCollect = true;
+                                          }
+                                        });
+
+                                        shopItems.splice(shopItems.indexOf(this), 1, {
+                                          title: "20% More Gold Targets",
+                                          level: 0,
+                                          maxLevel: 10,
+                                          price: 500,
+                                          x: undefined,
+                                          y: undefined,
+                                          detail: goldTargetDrop,
+                                          onPurchase: function () {
+                                            this.price = Math.round(this.price * 1.2);
+                                            goldTargetChance *= 1.2;
+
+                                            if (this.level == this.maxLevel) {
+                                              this.detail = null;
+                                              this.title = `x${goldTargetDrop} Gold Target Drops`;
+                                            }
+                                          }
+                                        });
+
+                                        if (this.level == this.maxLevel) {
+                                          this.title = "More Gold Targets";
+                                        }
+                                      }
+                                    }
+                                  });
+
+                                  shopItems.splice(shopItems.indexOf(this), 0, {
+                                    title: "2x Dark Target Drops",
+                                    level: 0,
+                                    maxLevel: 2,
+                                    price: 1500,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: `x${darkTargetConfettiMult}`,
+                                    locked: true,
+                                    onPurchase: function () {
+                                      darkTargetConfettiMult *= 2;
+                                      this.price *= 2;
+                                      this.detail = `x${darkTargetConfettiMult}`;
+
+                                      if (this.level == this.maxLevel) {
+                                        this.detail = null;
+                                        this.title = `x${darkTargetConfettiMult} Dark Target Drops`;
+                                      }
+                                    }
+                                  });
+                                  shopItems.splice(shopItems.indexOf(this), 1, {
+                                    title: "20% More Dark Targets",
+                                    level: 0,
+                                    maxLevel: 10,
+                                    price: 400,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: null,
+                                    onPurchase: function () {
+                                      this.price = Math.round(this.price * 1.2);
+                                      darkTargetChance *= 1.2;
+
+                                      if (this.level == this.maxLevel) {
+                                        this.title = "More Dark Targets";
+                                      }
+                                    }
+                                  });
+                                }
+                              }
+                            });
+
+                            shopItems.splice(shopItems.indexOf(this) + 2, 0, {
+                              title: "+1 Max Special Targets",
+                              level: 0,
+                              maxLevel: 9,
+                              price: 1000,
+                              x: undefined,
+                              y: undefined,
+                              detail: maxSpecialTargets,
+                              onPurchase: function () {
+                                this.price = Math.round(this.price * 1.2);
+                                maxSpecialTargets += 1;
+                                this.detail = maxSpecialTargets;
+
+                                if (this.level == this.maxLevel) {
+                                  this.detail = null;
+                                  this.title = `${maxSpecialTargets} Max Special Targets`;
+                                }
+                              }
+                            });
+
+                            shopItems.splice(shopItems.indexOf(this) + 2, 0, {
+                              title: "x2 Special Target Rate",
+                              level: 0,
+                              maxLevel: 3,
+                              price: 1000,
+                              x: undefined,
+                              y: undefined,
+                              detail: `x${specialTargetRateMult}`,
+                              onPurchase: function () {
+                                this.price *= 10;
+                                specialTargetRateMult *= 2;
+                                this.detail = `x${specialTargetRateMult}`;
+
+                                if (this.level == this.maxLevel) {
+                                  this.detail = null;
+                                  this.title = `x${specialTargetRateMult} Special Target Rate`;
+                                }
+                              }
+                            });
+
+                            shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                              title: "x1.5 Explosive Target Drops",
+                              level: 0,
+                              maxLevel: 3,
+                              price: 500,
+                              x: undefined,
+                              y: undefined,
+                              detail: null,
+                              locked: true,
+                              onPurchase: function () {
+                                minExplosiveConfetti *= 1.5;
+                                this.price *= 5;
+
+                                if (this.level == this.maxLevel) {
+                                  this.title = `x${1.5 ** this.maxLevel} Explosive Target Drops`;
+                                }
+                              }
+                            });
+
+                            shopItems.splice(shopItems.indexOf(this), 1, {
+                              title: "20% More Explosive Targets",
+                              level: 0,
+                              maxLevel: 10,
+                              price: 300,
+                              x: undefined,
+                              y: undefined,
+                              detail: null,
+                              onPurchase: function () {
+                                explosiveTargetChance *= 1.2;
+                                this.price = Math.round(this.price * 1.2);
+
+                                if (this.level == this.maxLevel) {
+                                  this.title = "More Explosive Targets";
+                                }
+                              }
+                            });
+
+                            if (this.level == this.maxLevel) {
+                              this.detail = null;
+                              this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
+                            }
+                          }
+                        });
+                      }
+
+                      this.price *= 5;
+                      targetChance *= 2;
+                      this.detail = `${Math.round(targetChance * 100)}%`;
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `${Math.round(targetChance * 100)}% Target Spawn Rate`;
+                      }
+                    }
+                  });
+
+                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                    title: "Half Drop Pick-Up Time",
+                    level: 0,
+                    maxLevel: 3,
+                    price: 1000,
+                    x: undefined,
+                    y: undefined,
+                    detail: normalParticleTime,
+                    onPurchase: function () {
+                      this.price *= 3;
+                      normalParticleTime /= 2;
+                      this.detail = normalParticleTime;
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `${normalParticleTime} Drop Pick-Up Time`;
+                      }
+                    }
+                  });
+                }
+                
+                if (this.level == this.maxLevel) {
+                  this.detail = null;
+                  this.title = `${maxTargets} Max Targets`;
+                }
+
+              }
+            });
+          }
+          this.price += 30 * this.level;
+          particleBase += 1;
+          this.detail = particleBase;
+
+          const nextItem = shopItems[shopItems.indexOf(this) + 1];
+          if (this.level + nextItem.level == 8) {
+            shopItems.splice(shopItems.indexOf(nextItem) + 1, 0, {
+              title: "x2 Target Spawn Rate",
+              level: 0,
+              maxLevel: 6,
+              price: 100,
+              x: undefined,
+              y: undefined,
+              detail: `${Math.round(targetChance * 100)}%`,
+              onPurchase: function () {
+                if (this.level == 1) {
+                  shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                    title: "Unlock Explosive Target",
+                    level: 0,
+                    maxLevel: 1,
+                    price: 200,
+                    x: undefined,
+                    y: undefined,
+                    detail: null,
+                    onPurchase: function () {
+                      explosiveTargetUnlocked = true;
+
+                      shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                        title: "Unlock Dark Target",
+                        level: 0,
+                        maxLevel: 1,
+                        price: 500,
+                        x: undefined,
+                        y: undefined,
+                        detail: null,
+                        onPurchase: function () {
+                          if (this.level == 1) {
+                            darkTargetUnlocked = true;
+
+                            shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                              title: "Unlock Gold Target",
+                              level: 0,
+                              maxLevel: 1,
+                              price: 1000,
+                              x: undefined,
+                              y: undefined,
+                              detail: null,
+                              onPurchase: function () {
+                                if (this.level == 1) {
+                                  goldTargetUnlocked = true;
+
+                                  shopItems.splice(shopItems.indexOf(this), 0, {
+                                    title: "2x Gold Target Drop",
+                                    level: 0,
+                                    maxLevel: 2,
+                                    price: 5000,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: goldTargetDrop,
+                                    onPurchase: function () {
+                                      goldTargetDrop *= 2;
+                                      this.price *= 5;
+                                      this.detail = goldTargetDrop;
+
+                                      if (this.level == this.maxLevel) {
+                                        this.detail = null;
+                                        this.title = `x${goldTargetDrop} Gold Target Drops`;
+                                      }
+                                    }
+                                  });
+
+                                  shopItems.splice(shopItems.indexOf(this), 0, {
+                                    title: "Easy-Collect Gold",
+                                    level: 0,
+                                    maxLevel: 1,
+                                    price: 10000,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: null,
+                                    onPurchase: function () {
+                                      goldAutoCollect = true;
+                                    }
+                                  });
+
+                                  shopItems.splice(shopItems.indexOf(this), 1, {
+                                    title: "20% More Gold Targets",
+                                    level: 0,
+                                    maxLevel: 10,
+                                    price: 500,
+                                    x: undefined,
+                                    y: undefined,
+                                    detail: goldTargetDrop,
+                                    onPurchase: function () {
+                                      this.price = Math.round(this.price * 1.2);
+                                      goldTargetChance *= 1.2;
+
+                                      if (this.level == this.maxLevel) {
+                                        this.detail = null;
+                                        this.title = `x${goldTargetDrop} Gold Target Drops`;
+                                      }
+                                    }
+                                  });
+
+                                  if (this.level == this.maxLevel) {
+                                    this.title = "More Gold Targets";
+                                  }
+                                }
+                              }
+                            });
+
+                            shopItems.splice(shopItems.indexOf(this), 0, {
+                              title: "2x Dark Target Drops",
+                              level: 0,
+                              maxLevel: 2,
+                              price: 1500,
+                              x: undefined,
+                              y: undefined,
+                              detail: `x${darkTargetConfettiMult}`,
+                              locked: true,
+                              onPurchase: function () {
+                                darkTargetConfettiMult *= 2;
+                                this.price *= 2;
+                                this.detail = `x${darkTargetConfettiMult}`;
+
+                                if (this.level == this.maxLevel) {
+                                  this.detail = null;
+                                  this.title = `x${darkTargetConfettiMult} Dark Target Drops`;
+                                }
+                              }
+                            });
+                            shopItems.splice(shopItems.indexOf(this), 1, {
+                              title: "20% More Dark Targets",
+                              level: 0,
+                              maxLevel: 10,
+                              price: 400,
+                              x: undefined,
+                              y: undefined,
+                              detail: null,
+                              onPurchase: function () {
+                                this.price = Math.round(this.price * 1.2);
+                                darkTargetChance *= 1.2;
+
+                                if (this.level == this.maxLevel) {
+                                  this.title = "More Dark Targets";
+                                }
+                              }
+                            });
+                          }
+                        }
+                      });
+
+                      shopItems.splice(shopItems.indexOf(this) + 2, 0, {
+                        title: "+1 Max Special Targets",
+                        level: 0,
+                        maxLevel: 9,
+                        price: 1000,
+                        x: undefined,
+                        y: undefined,
+                        detail: maxSpecialTargets,
+                        onPurchase: function () {
+                          this.price = Math.round(this.price * 1.2);
+                          maxSpecialTargets += 1;
+                          this.detail = maxSpecialTargets;
+
+                          if (this.level == this.maxLevel) {
+                            this.detail = null;
+                            this.title = `${maxSpecialTargets} Max Special Targets`;
+                          }
+                        }
+                      });
+
+                      shopItems.splice(shopItems.indexOf(this) + 2, 0, {
+                        title: "x2 Special Target Rate",
+                        level: 0,
+                        maxLevel: 3,
+                        price: 1000,
+                        x: undefined,
+                        y: undefined,
+                        detail: `x${specialTargetRateMult}`,
+                        onPurchase: function () {
+                          this.price *= 10;
+                          specialTargetRateMult *= 2;
+                          this.detail = `x${specialTargetRateMult}`;
+
+                          if (this.level == this.maxLevel) {
+                            this.detail = null;
+                            this.title = `x${specialTargetRateMult} Special Target Rate`;
+                          }
+                        }
+                      });
+
+                      shopItems.splice(shopItems.indexOf(this) + 1, 0, {
+                        title: "x1.5 Explosive Target Drops",
+                        level: 0,
+                        maxLevel: 3,
+                        price: 500,
+                        x: undefined,
+                        y: undefined,
+                        detail: null,
+                        locked: true,
+                        onPurchase: function () {
+                          minExplosiveConfetti *= 1.5;
+                          this.price *= 5;
+
+                          if (this.level == this.maxLevel) {
+                            this.title = `x${1.5 ** this.maxLevel} Explosive Target Drops`;
+                          }
+                        }
+                      });
+
+                      shopItems.splice(shopItems.indexOf(this), 1, {
+                        title: "20% More Explosive Targets",
+                        level: 0,
+                        maxLevel: 10,
+                        price: 300,
+                        x: undefined,
+                        y: undefined,
+                        detail: null,
+                        onPurchase: function () {
+                          explosiveTargetChance *= 1.2;
+                          this.price = Math.round(this.price * 1.2);
+
+                          if (this.level == this.maxLevel) {
+                            this.title = "More Explosive Targets";
+                          }
+                        }
+                      });
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
+                      }
+                    }
+                  });
+                }
+
+                this.price *= 5;
+                targetChance *= 2;
+                this.detail = `${Math.round(targetChance * 100)}%`;
+
+                if (this.level == this.maxLevel) {
+                  this.detail = null;
+                  this.title = `${Math.round(targetChance * 100)}% Target Spawn Rate`;
+                }
+              }
+            });
+
+            shopItems.splice(shopItems.indexOf(nextItem) + 1, 0, {
+              title: "Half Drop Pick-Up Time",
+              level: 0,
+              maxLevel: 3,
+              price: 1000,
+              x: undefined,
+              y: undefined,
+              detail: normalParticleTime,
+              onPurchase: function () {
+                this.price *= 3;
+                normalParticleTime /= 2;
+                this.detail = normalParticleTime;
+
+                if (this.level == this.maxLevel) {
+                  this.detail = null;
+                  this.title = `${normalParticleTime} Drop Pick-Up Time`;
+                }
+              }
+            });
+          }
+          
+          if (this.level == this.maxLevel) {
+            shopItems.splice(shopItems.indexOf(this) + 2, 0, {
+              title: "x2 Points",
+              level: 0,
+              maxLevel: 3,
+              price: 300000,
+              seedPrice: 1000,
+              x: undefined,
+              y: undefined,
+              detail: `x${pointsMult}`,
+              onPurchase: function () {
+                this.price += 200000 * this.level;
+                this.seedPrice += 3000 * this.level;
+                pointsMult *= 2;
+                if (this.level < this.maxLevel) {
+                  this.detail = `x${pointsMult}`;
+                } else {
+                  this.detail = null;
+                  this.title = `x${pointsMult} Points`;
+                }
+              }
+            });
+
+            this.detail = null;
+            this.title = `+${particleBase} Drops Per Target`;
+          }
+        }
+      },
+    ];
+
+    let farmersMarketItems = [
+      {
+        title: "+1 Garden Plot",
+        level: 0,
+        maxLevel: maxGardenPlots,
+        price: 0,
+        seedPrice: 0,
+        x: undefined,
+        y: undefined,
+        detail: null,
+        onPurchase: function () {
+          gardenPlots.push({
+            x: null,
+            y: null,
+            isWet: false,
+            isFertile: false,
+            strips: [],
+          });
+          this.price = 15000 * this.level;
+          this.seedPrice = 100 * this.level;
+
+          if (this.level == 1) {
+            farmersMarketItems.splice(farmersMarketItems.indexOf(this) + 1, 0, {
+              title: "Water 1 Plot",
+              level: 0,
+              maxLevel: gardenPlots.length,
+              price: 5000,
+              seedPrice: 10,
+              x: undefined,
+              y: undefined,
+              detail: null,
+              onPurchase: function () {
+                for (let i = 0; i < gardenPlots.length; i++) {
+                  const plot = gardenPlots[i];
+                  if (plot.isWet) continue;
+                  plot.isWet = true;
+                  break;
+                }
+                this.price = 5000 * this.level;
+                this.seedPrice = 200 * this.level;
+
+                if (this.level == this.maxLevel) {
+                  this.title = "All Plots Watered";
+                }
+              }
+            });
+            farmersMarketItems.splice(farmersMarketItems.indexOf(this) + 1, 0, {
+              title: "Enrich 1 Plot",
+              level: 0,
+              maxLevel: gardenPlots.length,
+              price: 5000,
+              seedPrice: 10,
+              x: undefined,
+              y: undefined,
+              detail: null,
+              onPurchase: function () {
+                for (let i = 0; i < gardenPlots.length; i++) {
+                  const plot = gardenPlots[i];
+                  if (plot.isFertile) continue;
+                  plot.isFertile = true;
+                  break;
+                }
+                this.price = 5000 * this.level;
+                this.seedPrice = 200 * this.level;
+
+                if (this.level == this.maxLevel) {
+                  this.title = "All Plots Enriched";
+                }
+              }
+            });
+            farmersMarketItems.splice(farmersMarketItems.indexOf(this) + 3, 0, {
+              title: "+1 Garden Row",
+              level: 0,
+              maxLevel: gardenPlots.length * 5,
+              price: 0,
+              seedPrice: 0,
+              x: undefined,
+              y: undefined,
+              detail: null,
+              onPurchase: function () {
+                if (this.level == 1) {
+                  farmersMarketItems.splice(farmersMarketItems.indexOf(this) + 2, 0, {
+                    title: "+1 Crop Harvest",
+                    level: 0,
+                    maxLevel: 9,
+                    price: 500,
+                    seedPrice: 10,
+                    x: undefined,
+                    y: undefined,
+                    detail: cropHarvestBonus,
+                    onPurchase: function () {
+                      cropHarvestBonus += 1;
+                      this.price *= 3;
+                      this.seedPrice *= 2;
+                      this.detail = cropHarvestBonus;
+
+                      if (this.level == this.maxLevel) {
+                        this.detail = null;
+                        this.title = `+${cropHarvestBonus} Crop Harvest`;
+                      }
+                    }
+                  });
+                  farmersMarketItems.splice(farmersMarketItems.indexOf(this) + 2, 0, {
+                    title: "+1 Rabbit",
+                    level: 0,
+                    maxLevel: 3,
+                    price: 5000,
+                    seedPrice: 250,
+                    x: undefined,
+                    y: undefined,
+                    detail: cropHarvestBonus,
+                    onPurchase: function () {
+                      const signX = Math.sign(Math.random() - .5) || 1;
+                      const signY = Math.sign(Math.random() - .5) || 1;
+
+                      gardenParticles.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height,
+                        xVelocity: signX * rabbitSpeed,
+                        yVelocity: signY * rabbitSpeed,
+                        friction: 0,
+                        lifespan: Infinity,
+                        color: "white",
+                        stroke: "gray",
+                        isCollector: true,
+                        size: 16,
+                      });
+                      this.price *= 5;
+                      this.seedPrice *= 3;
+
+                      if (this.level == this.maxLevel) {
+                        this.title = `${this.level} Rabbits`;
+                      }
+                    }
+                  });
+                }
+
+                gardenStrips += 1;
+                gardenPlots[Math.floor((gardenStrips - 1) / 5)].strips.push([{
+                  x: null, y: null,
+                  growth: 0,
+                  confetti: 2 + Math.round(Math.random()),
+                }, {
+                  x: null, y: null,
+                  growth: 0,
+                  confetti: 2 + Math.round(Math.random()),
+                }, {
+                  x: null, y: null,
+                  growth: 0,
+                  confetti: 2 + Math.round(Math.random()),
+                }, {
+                  x: null, y: null,
+                  growth: 0,
+                  confetti: 2 + Math.round(Math.random()),
+                }, {
+                  x: null, y: null,
+                  growth: 0,
+                  confetti: 2 + Math.round(Math.random()),
+                },]);
+                this.price = 5000 * this.level;
+                this.seedPrice = 20 * this.level;
+                this.detail = gardenStrips;
+
+                if (this.level == this.maxLevel) {
+                  this.detail = null;
+                  this.title = `${gardenStrips} Garden Rows`;
+                }
+              }
+            });
+          } // end level 1
+
+          if (this.level == this.maxLevel) {
+            this.title = `${gardenPlots.length} Garden Plots`;
+          }
+
+          // update the water + enrich upgrades
+          farmersMarketItems[farmersMarketItems.indexOf(this) + 1].maxLevel = gardenPlots.length;
+          farmersMarketItems[farmersMarketItems.indexOf(this) + 1].title = "Water 1 Plot";
+          farmersMarketItems[farmersMarketItems.indexOf(this) + 2].maxLevel = gardenPlots.length;
+          farmersMarketItems[farmersMarketItems.indexOf(this) + 2].title = "Enrich 1 Plot";
+
+          // update the rows upgrade
+          farmersMarketItems[farmersMarketItems.indexOf(this) + 3].maxLevel = gardenPlots.length * 5;
+        }
+      }
+    ];
+
+    //#region collisions
+    const doCollisions = (collider, mode) => {
+      if (mode == "main") {
+        for (let i = 0; i < targets.length; i++) {
+          const target = targets[i];
+          if (rectsDoCollide(collider, target)) collectTarget(target);
+        }
+
+        for (let i = 0; i < specialTargets.length; i++) {
+          const target = specialTargets[i];
+          if (rectsDoCollide(collider, target)) collectSpecialTarget(target);
+        }
+      } else if (mode == "shop") {
+        shopFocus = undefined;
+        for (let i = 0; i < shopItems.length; i++) {
+          const item = shopItems[i];
+          if (purchaseIsValid(item) && rectsDoCollide(collider, { ...item, size: shopButtonSize })) {
+            shopFocus = item;
+            break;
+          }
+        }
+      } else if (mode == "garden") {
+        for (let i = 0; i < gardenPlots.length; i++) {
+          const plot = gardenPlots[i];
+
+          for (let j = 0; j < plot.strips.length; j++) {
+            const strip = plot.strips[j];
+
+            for (let k = 0; k < strip.length; k++) {
+              const crop = strip[k];
+
+              if (crop.growth >= 1 && rectsDoCollide(collider, { x: crop.x, y: crop.y, size: maxCropSize })) harvestCrop(crop);
+            }
+          }
+        }
+      } else if (mode == "farmers market") {
+        shopFocus = undefined;
+        for (let i = 0; i < farmersMarketItems.length; i++) {
+          const item = farmersMarketItems[i];
+          const purchaseIsValid = item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true) && item.level < item.maxLevel;
+          if (purchaseIsValid && rectsDoCollide(collider, { ...item, size: shopButtonSize })) {
+            shopFocus = item;
+            break;
+          }
+        }
+      }
+    }
+
+    const rectsDoCollide = (rect1, rect2) => {
+      const r1Half = rect1.size / 2;
+      const r1 = {
+        top: rect1.y - r1Half,
+        bottom: +rect1.y + r1Half,
+        right: +rect1.x + r1Half,
+        left: rect1.x - r1Half,
+      }
+
+      const r2Half = rect2.size / 2;
+      const r2 = {
+        top: rect2.y - r2Half,
+        bottom: +rect2.y + r2Half,
+        right: +rect2.x + r2Half,
+        left: rect2.x - r2Half,
+      }
+
+      const xCollision = r1.left < r2.right && r1.left > r2.left || r1.right > r2.left && r1.right < r2.right;
+      const yCollision = r1.top < r2.bottom && r1.top > r2.top || r1.bottom > r2.top && r1.bottom < r2.bottom;
+
+      return xCollision && yCollision;
+    }
+    //#endregion
+
+    //#region player
+    const setupPlayerControls = () => {
+      window.addEventListener("keydown", (event) => {
+        keys[event.key.toLowerCase()] = true;
+      });
+
+      window.addEventListener("keyup", (event) => {
+        keys[event.key.toLowerCase()] = false;
+      });
+    }
+
+    const drawPlayer = () => {
+      ctx.fillStyle = player.color;
+      ctx.fillRect(player.x - (player.size / 2), player.y - (player.size / 2), player.size, player.size);
+    }
+
+    const movePlayer = deltaT => {
+      let xSign = Math.sign(player.xVelocity);
+      let ySign = Math.sign(player.yVelocity);
+
+      // x momentum
+      if (keys["a"] || keys["d"]) {
+        if (keys["a"]) player.xVelocity = Math.max(player.xVelocity - player.acceleration, -player.maxVelocity);
+        if (keys["d"]) player.xVelocity = Math.min(player.xVelocity + player.acceleration, player.maxVelocity);
+
+        xSign = Math.sign(player.xVelocity);
+      } else {
+        if (xSign) player.xVelocity -= player.friction * xSign;
+      }
+
+      // y momentum 
+      if (keys["w"] || keys["s"]) {
+        if (keys["w"]) player.yVelocity = Math.max(player.yVelocity - player.acceleration, -player.maxVelocity);
+        if (keys["s"]) player.yVelocity = Math.min(player.yVelocity + player.acceleration, player.maxVelocity);
+
+        ySign = Math.sign(player.yVelocity);
+      } else {
+        if (ySign) player.yVelocity -= player.friction * ySign;
+      }
+
+      console.log(player.xVelocity)
+      // move
+      player.x += player.xVelocity;
+      player.y += player.yVelocity;
+
+      // keep the player on screen
+      const primaryScenes = Object.keys(sceneDoors);
+      const secondaryScenes = Object.values(sceneDoors);
+      if (player.x > canvas.width) {
+        console.log(primaryScenes.length,(primaryScenes.indexOf(scene) + 1), (primaryScenes.indexOf(scene) + 1) % primaryScenes.length)
+        const nextScene = sceneDoors.length > 1 ? sceneDoors[(primaryScenes.indexOf(scene) + 1) % primaryScenes.length] : null;
+        if (player.y < canvas.height / 2 + 50 && player.y > canvas.height / 2 - 50 && nextScene) {
+          scene = nextScene;
+          player.x = 20;
+          console.log(scene)
+        }
+
+        player.xVelocity -= player.acceleration * 2;
+      }
+      if (player.x < 0) {
+        const previousScene = sceneDoors.length > 1 ? sceneDoors[(primaryScenes.indexOf(scene) - 1) % primaryScenes.length] : null;
+        if (player.y < canvas.height / 2 + 50 && player.y > canvas.height / 2 - 50 && previousScene) {
+          scene = previousScene;
+          player.x = canvas.width - 20;
+          console.log(scene)
+        }
+
+        player.xVelocity += player.acceleration * 2;
+      }
+      if (player.y > canvas.height) {
+        const lowerScene = sceneDoors[scene];
+        if (player.x < canvas.width / 2 + 50 && player.x > canvas.width / 2 - 50 && lowerScene) {
+          scene = lowerScene;
+          player.y = 20;
+        }
+
+        player.yVelocity -= player.acceleration * 2;
+      }
+      if (player.y < 0) {
+        const upperScene = primaryScenes.find(key => sceneDoors[key] === scene);
+        if (player.x < canvas.width / 2 + 50 && player.x > canvas.width / 2 - 50 && upperScene) {
+          scene = upperScene;
+          player.y = canvas.height - 20;
+        }
+
+        player.yVelocity += player.acceleration * 2;
+      }
+    }
+    //#endregion
+
+    //#region particles
+    const moveParticles = () => {
+      for (let i = 0; i < particles.length; i++) {
+        const particle = particles[i];
+
+        // keep the particle on screen
+        if (particle.x > canvas.width) particle.xVelocity -= 2;
+        if (particle.y > canvas.height) particle.yVelocity -= 2;
+        if (particle.x < 0) particle.xVelocity += 2;
+        if (particle.y < 0) particle.yVelocity += 2;
+
+        if (particle.xVelocity || particle.yVelocity) {
+          // move
+          particle.x += particle.xVelocity;
+          particle.y += particle.yVelocity;
+
+          // slow down
+          const xSign = Math.sign(particle.xVelocity);
+          const ySign = Math.sign(particle.yVelocity);
+          if (xSign) particle.xVelocity -= particle.friction * xSign;
+          if (ySign) particle.yVelocity -= particle.friction * ySign;
+        }
+
+        if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particleSize }, "main");
+
+        // die off
+        if (--particle.lifespan < 1) {
+          if (particle.onDeath) particle.onDeath();
+          particles.splice(i, 1);
+        }
+      }
+
+      for (let i = 0; i < shopParticles.length; i++) {
+        const particle = shopParticles[i];
+
+        if (particle.xVelocity || particle.yVelocity) {
+          // move
+          particle.x += particle.xVelocity;
+          particle.y += particle.yVelocity;
+
+          // slow down
+          const xSign = Math.sign(particle.xVelocity);
+          const ySign = Math.sign(particle.yVelocity);
+          if (xSign) particle.xVelocity -= particle.friction * xSign;
+          if (ySign) particle.yVelocity -= particle.friction * ySign;
+        }
+
+        // die off
+        if (--particle.lifespan < 1) {
+          if (particle.onDeath) particle.onDeath();
+          shopParticles.splice(i, 1);
+        }
+      }
+
+      for (let i = 0; i < gardenParticles.length; i++) {
+        const particle = gardenParticles[i];
+
+        // keep the particle on screen
+        if (particle.x > canvas.width) particle.xVelocity = -Math.abs(particle.xVelocity);
+        if (particle.y > canvas.height) particle.yVelocity = -Math.abs(particle.yVelocity);
+        if (particle.x < 0) particle.xVelocity = Math.abs(particle.yVelocity);
+        if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
+
+        if (particle.xVelocity || particle.yVelocity) {
+          // move
+          particle.x += particle.xVelocity;
+          particle.y += particle.yVelocity;
+
+          // slow down
+          const xSign = Math.sign(particle.xVelocity);
+          const ySign = Math.sign(particle.yVelocity);
+          if (xSign) particle.xVelocity -= particle.friction * xSign;
+          if (ySign) particle.yVelocity -= particle.friction * ySign;
+        }
+
+        if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particle.size ? particle.size : particleSize }, "garden");
+
+        // die off
+        if (--particle.lifespan < 1) {
+          if (particle.onDeath) particle.onDeath();
+          gardenParticles.splice(i, 1);
+        }
+      }
+    }
+
+    const drawParticles = () => {
+      if (scene == "main") {
+        for (let i = 0; i < particles.length; i++) {
+          const particle = particles[i];
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
+        }
+      } else if (scene == "shop") {
+        for (let i = 0; i < shopParticles.length; i++) {
+          const particle = shopParticles[i];
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
+        }
+      } else if (scene == "garden") {
+        for (let i = 0; i < gardenParticles.length; i++) {
+          const particle = gardenParticles[i];
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
+
+          if (particle.stroke) {
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = particle.stroke;
+            ctx.strokeRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
+          }
+        }
+      }
+    }
+    //#endregion
+
+    //#region targets
+    const generateTarget = (x, y) => {
+      const superPotent = Math.random() < superPotentChance;
+      const potency = superPotent ? superPotentValue : Math.random() * maxNormalPotency;
+      const breadth = Math.random();
+
+      const newTarget = {
+        x: x ? x : Math.trunc(Math.random() * canvas.width),
+        y: y ? y : Math.trunc(Math.random() * canvas.height),
+        size: Math.trunc(breadth * breadthSizeBonus + minimumTargetSize),
+        color: randoColor(Math.max(potency, .1)),
+        confetti: Math.trunc(potency * potencyBonus + breadth * breadthBonus),
+      };
+
+      if (superPotent) newTarget.stroke = "gray";
+
+      targets.push(newTarget);
+    }
+
+    const generateSpecialTarget = type => {
+      if (type == "dark") {
+        const breadth = Math.random();
+
+        const newTarget = {
+          x: Math.trunc(Math.random() * canvas.width),
+          y: Math.trunc(Math.random() * canvas.height),
+          size: Math.trunc(breadth * 40 + 40),
+          color: "black",
+          confetti: Math.trunc(breadth * breadthBonus + 20 * darkTargetConfettiMult),
+          type: type,
+        };
+
+        specialTargets.push(newTarget);
+      } else if (type == "explosive") {
+        const newTarget = {
+          x: Math.trunc(Math.random() * canvas.width),
+          y: Math.trunc(Math.random() * canvas.height),
+          size: 16,
+          color: "red",
+          confetti: Math.random() * minExplosiveConfetti / 2 + minExplosiveConfetti,
+          type: type,
+        };
+
+        specialTargets.push(newTarget);
+      } else if (type == "gold") {
+        const newTarget = {
+          x: Math.trunc(Math.random() * canvas.width),
+          y: Math.trunc(Math.random() * canvas.height),
+          size: Math.random() * goldTargetSize / 2 + goldTargetSize,
+          color: "gold",
+          confetti: 0,
+          type: type,
+        };
+
+        specialTargets.push(newTarget);
+      }
+    }
+
+    const drawTargets = targetArray => {
+      for (let i = 0; i < targetArray.length; i++) {
+        const target = targetArray[i];
+
+        if (target.stroke) {
+          ctx.strokeStyle = target.stroke;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(target.x - (target.size / 2), target.y - (target.size / 2), target.size, target.size);
+        }
+
+        ctx.fillStyle = target.color;
+        ctx.fillRect(target.x - (target.size / 2), target.y - (target.size / 2), target.size, target.size);
+      }
+    }
+
+    const collectTarget = target => {
+      for (let i = 0; i < target.confetti + particleBase; i++) {
+        particles.push({
+          x: target.x,
+          y: target.y,
+          xVelocity: Math.trunc(Math.random() * 30 - 15),
+          yVelocity: Math.trunc(Math.random() * 30 - 15),
+          friction: 1,
+          lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
+          color: target.color,
+          onDeath: () => { points += 1 * pointsMult },
+        });
+      }
+
+      targets.splice(targets.indexOf(target), 1);
+    }
+
+    const collectSpecialTarget = target => {
+      if (target.type == "dark") {
+        const maxVelo = 25 + darkTargetConfettiMult * 2;
+        for (let i = 0; i < target.confetti; i++) {
+          // spawn particles that become new generic targets
+          particles.push({
+            x: target.x,
+            y: target.y,
+            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            friction: 1,
+            lifespan: Math.trunc((2 + Math.random()) / 2 * FPS),
+            color: target.color,
+            stroke: "white",
+            onDeath: function () { generateTarget(this.x, this.y) },
+          });
+        }
+      } else if (target.type == "explosive") {
+        // spawn many high velocity particles
+        for (let i = 0; i < target.confetti; i++) {
+          particles.push({
+            x: target.x,
+            y: target.y,
+            xVelocity: Math.trunc(Math.random() * 140 - 70),
+            yVelocity: Math.trunc(Math.random() * 140 - 70),
+            friction: 0,
+            lifespan: Math.trunc((.4 + Math.random() * .4) * FPS * 2),
+            color: "orange",
+            onDeath: () => { points += 1 * pointsMult },
+            isCollector: true,
+          });
+        }
+      } else if (target.type == "gold") {
+        // spawn high value particles on contact
+        target.size -= goldTargetDecay;
+
+        if (goldAutoCollect) {
+          autoCollectTargets.push(target);
+          specialTargets.splice(specialTargets.indexOf(target), 1);
+        }
+
+        const maxVelo = 8 * goldTargetDrop;
+        for (let i = 0; i < goldTargetDrop; i++) {
+          particles.push({
+            x: target.x,
+            y: target.y,
+            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            friction: 1,
+            lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
+            color: target.color,
+            stroke: "orange",
+            onDeath: () => {
+              points += 5 * pointsMult;
+            },
+          });
+        }
+
+        if (target.size < goldTargetMinSize) specialTargets.splice(specialTargets.indexOf(target), 1);
+      }
+
+      if (target.type == "gold") return;
+      specialTargets.splice(specialTargets.indexOf(target), 1);
+    }
+
+    const doAutoCollection = () => {
+      for (let i = 0; i < autoCollectTargets.length; i++) {
+        const target = autoCollectTargets[i];
+
+        if (target.type == "gold") {
+          target.size -= goldTargetDecay;
+
+          const maxVelo = 8 * goldTargetDrop;
+          for (let i = 0; i < goldTargetDrop; i++) {
+            particles.push({
+              x: target.x,
+              y: target.y,
+              xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+              yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+              friction: 1,
+              lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
+              color: target.color,
+              onDeath: () => {
+                points += 5 * pointsMult;
+              },
+            });
+          }
+
+          if (target.size < goldTargetMinSize) autoCollectTargets.splice(autoCollectTargets.indexOf(target), 1);
+        }
+      }
+    }
+    //#endregion
+
+    //#region utility functions
+    const randoColor = strength => {
+      const h = Math.floor(Math.random() * 256);
+      const s = Math.trunc(strength * 100);
+      const l = 50;
+      const a = Math.max(strength.toFixed(2), .3);
+      return `hsla(${h}, ${s}%, ${l}%, ${a})`;
+    }
+    //#endregion
+
+    const drawText = () => {
+      const tempCtx = canvas.getContext("2d");
+      tempCtx.fillStyle = "black";
+      tempCtx.lineWidth = 3;
+      tempCtx.strokeStyle = "white";
+      tempCtx.font = "18px serif";
+
+      tempCtx.textAlign = "left";
+      tempCtx.fillText(version, 10, 20);
+
+      const primaryScenes = Object.keys(sceneDoors);
+      const nextScene = sceneDoors[(primaryScenes.indexOf(scene) + 1) % primaryScenes.length];
+      const previousScene = sceneDoors[Math.abs(primaryScenes.indexOf(scene) - 1) % primaryScenes.length];
+
+      if (primaryScenes.length > 1) {
+        // draw right label
+        tempCtx.textAlign = "right";
+        tempCtx.strokeText(`${sceneDoors[nextScene]} 🡆`, canvas.width - 20, canvas.height / 2);
+        tempCtx.fillText(`${sceneDoors[nextScene]} 🡆`, canvas.width - 20, canvas.height / 2);
+
+        // draw left label
+        tempCtx.textAlign = "left";
+        tempCtx.strokeText(`🡄 ${sceneDoors[previousScene]}`, 20, canvas.height / 2);
+        tempCtx.fillText(`🡄 ${sceneDoors[previousScene]}`, 20, canvas.height / 2);
+      }
+      
+      const drawCurrencies = startHeight => {
+        tempCtx.textAlign = "center";
+        if (gardenIsUnlocked) {
+          startHeight -= 20
+          tempCtx.strokeText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
+          tempCtx.fillText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
+        }
+
+        tempCtx.strokeText(`Points: ${points}`, canvas.width / 2, startHeight);
+        tempCtx.fillText(`Points: ${points}`, canvas.width / 2, startHeight);
+      }
+
+      const upperScene = primaryScenes.find(key => sceneDoors[key] === scene);
+      tempCtx.textAlign = "center";
+      if (sceneDoors[scene]) { // draw bottom label
+        drawCurrencies(20);
+
+        tempCtx.strokeText("🡇", canvas.width / 2, canvas.height - 20);
+        tempCtx.fillText("🡇", canvas.width / 2, canvas.height - 20);
+        tempCtx.strokeText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
+        tempCtx.fillText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
+      } else if (upperScene) { // draw top label
+        drawCurrencies(canvas.height - 20);
+
+        tempCtx.strokeText("🡅", canvas.width / 2, 20);
+        tempCtx.fillText("🡅", canvas.width / 2, 20);
+        tempCtx.strokeText(upperScene, canvas.width / 2, 35);
+        tempCtx.fillText(upperScene, canvas.width / 2, 35);
+      }
+      
+      const mainTextWidth = 55;
+      const shopTextWidth = 55;
+      const gardenTextWidth = 65;
+    }
+
+    const randomEvents = () => {
+      // target appears
+      if (Math.random() < targetChance && targets.length < maxTargets) generateTarget();
+
+      // dark target appears
+      if (darkTargetUnlocked && Math.random() < darkTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) generateSpecialTarget("dark");
+
+      // explosive target appears
+      if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) generateSpecialTarget("explosive");
+
+      // gold target appears
+      if (goldTargetUnlocked && Math.random() < goldTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) generateSpecialTarget("gold");
+    }
+
+    const update = () => {
+      movePlayer();
+      moveParticles();
+      randomEvents();
+      growCrops();
+      doCollisions(player, scene);
+
+      if (shopFocus) detectPurchase();
+
+      doAutoCollection();
+    }
+
+    const render = () => {
+      if (scene == "garden" || scene == "farmers market") canvas.style.backgroundColor = "rgb(200, 255, 200)";
+      else if (scene == "shop") canvas.style.backgroundColor = "rgb(240, 225, 200)";
+      else canvas.style.backgroundColor = "white";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (scene == "shop") {
+        drawShopItems(shopItems);
+      } else if (scene == "farmers market") {
+        drawShopItems(farmersMarketItems);
+      }
+
+      if (scene == "main") {
+        drawTargets(targets);
+        drawTargets(specialTargets);
+        drawTargets(autoCollectTargets);
+      } else if (scene == "garden") {
+        drawGardenPlots();
+        drawTargets(gardenTargets);
+      }
+
+      drawText();
+      drawPlayer();
+      drawParticles();
+
+      if (shopFocus) {
+        drawPurchaseButton();
+      }
+    }
+
+    //#region garden
+    let gardenPlots = [];
+
+    const harvestCrop = crop => {
+      for (let i = 0; i < crop.confetti + cropHarvestBonus; i++) {
+        gardenParticles.push({
+          x: crop.x,
+          y: crop.y,
+          xVelocity: Math.trunc(Math.random() * 14 - 7),
+          yVelocity: Math.trunc(Math.random() * 14 - 7),
+          friction: 1,
+          lifespan: Math.trunc((1 + Math.random() * .5) * FPS),
+          color: `hsl(120, 80%, 40%)`,
+          onDeath: () => { seeds += 1 },
+        });
+      }
+
+      crop.growth = null;
+    }
+
+    const growCrops = () => {
+      for (let i = 0; i < gardenPlots.length; i++) {
+        const plot = gardenPlots[i];
+
+        for (let j = 0; j < plot.strips.length; j++) {
+          const strip = plot.strips[j];
+
+          for (let k = 0; k < strip.length; k++) {
+            const crop = strip[k];
+
+            if (crop.growth < 1 && Math.random() < cropGrowthChance) crop.growth = Math.min(crop.growth + .1 + (plot.isFertile ? .1 : 0) + (plot.isWet ? .1 : 0), 1);
+          }
+        }
+      }
+    }
+
+    const drawGardenPlots = () => {
+      const gardenPadding = 100;
+      const plotLength = 250;
+      const plotHeight = 200;
+
+      const plotsPerGridRow = Math.min(gardenPlots.length, Math.floor((canvas.width - gardenPadding * 2) / plotLength));
+      const gridRows = Math.ceil(gardenPlots.length / plotsPerGridRow);
+      const plotGapX = (canvas.width - gardenPadding * 2 - plotsPerGridRow * plotLength) / Math.max(1, plotsPerGridRow - 1);
+      const plotGapY = (canvas.height - gardenPadding * 2 - gridRows * plotHeight) / Math.max(1, gridRows - 1);
+
+      const stripsPerPlot = 5;
+      const plotPadding = 10;
+      const stripLength = plotLength - plotPadding * 2;
+      const stripHeight = (plotHeight - plotPadding * 2 - plotPadding * (stripsPerPlot - 1)) / stripsPerPlot;
+
+      const cropsPerStrip = 5;
+      const cropGap = stripLength / (cropsPerStrip + 1);
+
+      // draw plot
+      for (let i = 0; i < gardenPlots.length; i++) {
+        const plot = gardenPlots[i];
+        const plotColor = `hsl(36, 39%, ${60 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+        const gardenGridX = i % plotsPerGridRow;
+        const gardenGridY = Math.floor(i / plotsPerGridRow);
+
+        plot.x = gardenPadding + plotLength * gardenGridX + plotGapX * gardenGridX;
+        plot.y = gardenPadding + plotHeight * gardenGridY + plotGapY * gardenGridY;
+
+        ctx.fillStyle = plotColor;
+        ctx.fillRect(plot.x, plot.y, plotLength, plotHeight);
+
+        // draw strips
+        for (let j = 0; j < plot.strips.length; j++) {
+          const strip = plot.strips[j];
+
+          const stripColor = `hsl(36, 39%, ${50 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+
+          const stripX = plot.x + plotPadding;
+          const stripY = plot.y + plotPadding + j * stripHeight + j * plotPadding;
+
+          ctx.fillStyle = stripColor;
+          ctx.fillRect(stripX, stripY, stripLength, stripHeight);
+
+          // draw crops
+          for (let k = 0; k < strip.length; k++) {
+            const crop = strip[k];
+
+            crop.x = stripX + cropGap * (k + 1);
+            crop.y = stripY + stripHeight / 2;
+            const cropColor = `hsl(120, ${(crop.growth * .65 + .35) * 100}%, ${(1 - (crop.growth * .4 + .2)) * 100}%)`;
+            const sizeMod = crop.growth * .8 + .2;
+
+            ctx.fillStyle = cropColor;
+            ctx.fillRect(crop.x - maxCropSize * sizeMod / 2, crop.y - maxCropSize * sizeMod / 2, maxCropSize * sizeMod, maxCropSize * sizeMod);
+          }
+        }
+      }
+    }
+
+    //#endregion
+
+    //#region shop
+    const purchaseIsValid = shopItem => {
+      return (shopItem.price ? shopItem.price <= points : true) && (shopItem.seedPrice ? shopItem.seedPrice <= seeds : true) && (shopItem.maxLevel ? shopItem.level < shopItem.maxLevel : true);
+    }
+
+    const detectPurchase = () => {
+      if (keys["e"]) {
+        shopFocus.level += 1;
+        points -= shopFocus.price;
+        if (shopFocus.seedPrice) seeds -= shopFocus.seedPrice;
+        shopFocus.onPurchase();
+
+        const maxVelo = 2 * shopFocus.level + 10;
+        for (let i = 0; i < Math.min(7 * shopFocus.level, 200); i++) {
+          shopParticles.push({
+            x: shopFocus.x,
+            y: shopFocus.y,
+            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            friction: 1,
+            lifespan: Math.trunc((.25 + Math.random() * .25) * FPS),
+            color: shopFocus.level == shopFocus.maxLevel ? "gold" : "rgb(0, 200, 0)",
+          });
+        }
+        keys["e"] = false;
+      }
+    }
+
+    const drawPurchaseButton = () => {
+      ctx.font = "40px sans-serif";
+      ctx.textAlign = "center";
+      if (ctx.fillStyle != "lime") ctx.fillStyle = "lime";
+      if (ctx.lineWidth != 3) ctx.lineWidth = 3;
+      if (ctx.strokeStyle != "black") ctx.strokeStyle = "black";
+      ctx.strokeText("E", player.x, player.y - 50);
+      ctx.fillText("E", player.x, player.y - 50);
+    }
+
+    const drawShopItems = itemArray => {
+      const shopItemsPerRow = 5;
+      const shopRows = 4;
+      const shopPadding = 3 * shopButtonSize;
+      const minimumLabelWidth = 5 * shopButtonSize;
+      const rowGap = (canvas.height - shopPadding * 2 - shopRows * shopButtonSize) / shopRows;
+      const colGap = (canvas.width - shopPadding * 2 - shopItemsPerRow * shopButtonSize) / (shopItemsPerRow - 1);
+      const itemLabelFontSize = 20;
+
+      for (let i = 0; i < itemArray.length; i++) {
+        const item = itemArray[i];
+
+        const row = Math.floor(i / shopItemsPerRow) + 1;
+        const col = i % shopItemsPerRow + 1;
+
+        // draw button
+        if (item.level === item.maxLevel) {
+          ctx.fillStyle = "gold";
+        } else if (item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true)) {
+          ctx.fillStyle = "rgb(0, 200, 0)";
+        } else {
+          ctx.fillStyle = "rgb(200, 0, 0)";
+        }
+        item.x = shopPadding + (col - 1) * shopButtonSize + (col - 1) * colGap + 20;
+        item.y = shopPadding + (row - 1) * shopButtonSize + (row - 1) * rowGap;
+        ctx.fillRect(item.x - shopButtonSize / 2, item.y - shopButtonSize / 2, shopButtonSize, shopButtonSize);
+
+        // draw "new!" badge
+        if (item.level == 0) {
+          ctx.font = "bold 20px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillStyle = purchaseIsValid(item) ? "rgb(200, 0, 0)" : "rgb(200, 0, 0)";
+          ctx.fillText("new!", item.x, item.y - shopButtonSize / 1.5);   
+        }       
+
+        // draw item title
+        ctx.font = `${itemLabelFontSize}px serif`;
+        ctx.fillStyle = "black";
+        ctx.textAlign = "center";
+        ctx.fillText(`${item.title}${item.detail ? " : " + item.detail : ""}`, item.x, item.y + shopButtonSize, minimumLabelWidth);
+
+        if (!(item.level < item.maxLevel)) continue;
+
+        // draw pricing
+        const priceDetails = (item.price ? `${item.price} points` : "") + (item.price && (item.seedPrice || item.maxLevel) ? " : " : "");
+        const seedPriceDetails = (item.seedPrice ? `${item.seedPrice} seeds` : "") + (item.seedPrice && item.maxLevel ? " : " : "");
+        const levelDetails = item.maxLevel ? `${item.level}/${item.maxLevel}` : "";
+        ctx.fillText(priceDetails + seedPriceDetails + levelDetails, item.x, item.y + shopButtonSize + 20);
+      }
+    }
+
+    //#endregion
+
+
+    const gameLoop = () => {
+      const now = Date.now();
+      const deltaT = (now - lastFrameTime) / 1000; // seconds
+      lastFrameTime = now;
+
+      update();
+      render();
+      setTimeout(gameLoop, 1000 / FPS);
+    }
+
+    let lastFrameTime = Date.now();
+
+    // start the game with a few targets
+    for (let i = 0; i < 5; i++) generateTarget();
+
+    setupPlayerControls();
+    gameLoop();
+  </script>
+
+</body>
+
+</html>
