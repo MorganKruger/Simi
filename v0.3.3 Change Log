@@ -1,0 +1,27 @@
+v0.3.3 (The Garden Update)
+
+reorganize entrances to areas. (put shop below main, beside farmers market)
+
+upgrade for double explosive particle time
+
+* farmers market particles don't show
+
+increase max level of max targets upgrade and reduced price scaling
+
+* special targets don't display stroke
+
+upgrade for double explosive life time (unlocks after maxing explosive target drops)
+
+add arrow key support
+
+turtle upgrade for main screen (requires seeds) (basically rabbit, but slower)
+
+special targets have inconsistent ordering of upgrades
+
+reduce shop particles
+
+* once, an undefined item appeared and would crash the game if purchased
+
+sunlamp garden upgrade (x2 crop growth chance)
+
+add rain
