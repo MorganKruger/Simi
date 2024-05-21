@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simi</title>
+  <title>Canvas</title>
   <style>
     html,
     body {
@@ -13,22 +13,13 @@
       height: 100%;
       width: 100%;
       background-color: linen;
-      display: grid;
-      display: flex;
       align-items: center;
       justify-content: center;
-    }
-
-    #main {
-      display: grid;
-      grid-template-rows: auto auto;
-      background-color: #ffffff;
-      border-collapse: collapse;
+      display: grid; 
     }
 
     canvas {
-      width: 100%;
-      height: 100%;
+      background-color: #ffffff;
     }
   </style>
 </head>
@@ -43,7 +34,7 @@
     const ctx = canvas.getContext("2d");
     const FPS = 60;
     const keys = {};
-    const version = "v0.3.3";
+    const version = "v0.4.0";
 
     const player = {
       x: canvas.width / 2,
@@ -75,7 +66,7 @@
     let breadthSizeBonus = 10; // increase target breadth effectiveness on average
     let minimumTargetSize = 30;
     let breadthBonus = 5; // points from target breadth
-    let potencyBonus = 5; // points from target potency
+    let potencyBonus = 10; // points from target potency
     let minimumPotency = 0; // minimum potency (1=100%)
     let maxNormalPotency = .3; // maximum potency (1=100%)
     let superPotentChance = .05; // chance for 100% potency (1=100%)
@@ -111,7 +102,7 @@
     let goldTargetSize = 50; // size reduction per frame of the gold target
     const goldTargetMinSize = 25; // minimum size before a gold target disappears
     let goldTargetDrop = 1; // gold target shoots 2 particles per frame instead of 1
-    let goldAutoCollect = false; 87
+    let goldAutoCollect = false; 
 
     let gardenIsUnlocked = false; // boolean determines whether the garden is enabled
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
@@ -674,7 +665,7 @@
         onPurchase: function () {
           gardenPlots.push({
             x: null, y: null,
-            isWet: rainDuration ? true : false,
+            isWet: rainDuration > 0,
             wetLifespan: Math.trunc(Math.random() * wetRandRange + minWetLifespan),
             isFertile: false,
             strips: [],
@@ -1306,8 +1297,8 @@
         particles.push({
           x: target.x,
           y: target.y,
-          xVelocity: Math.trunc(Math.random() * (drops / 3 + 18) - (drops / 6 + 9)),
-          yVelocity: Math.trunc(Math.random() * (drops / 3 + 18) - (drops / 6 + 9)),
+          xVelocity: Math.trunc(Math.random() * (drops / 3 + 16) - (drops / 6 + 8)),
+          yVelocity: Math.trunc(Math.random() * (drops / 3 + 16) - (drops / 6 + 8)),
           friction: 1,
           lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
           color: target.color,
@@ -1358,13 +1349,13 @@
           specialTargets.splice(specialTargets.indexOf(target), 1);
         }
 
-        const maxVelo = 8 * goldTargetDrop;
+        const maxVelo = 25 + 4 * goldTargetDrop;
         for (let i = 0; i < goldTargetDrop; i++) {
           particles.push({
             x: target.x,
             y: target.y,
-            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+            xVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
+            yVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
             friction: 1,
             lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
             color: target.color,
@@ -1376,7 +1367,7 @@
 
         if (target.size < goldTargetMinSize) specialTargets.splice(specialTargets.indexOf(target), 1);
       }
-
+      
       if (target.type == "gold") return;
       specialTargets.splice(specialTargets.indexOf(target), 1);
     }
@@ -1420,17 +1411,17 @@
     const doAutoCollection = () => {
       for (let i = 0; i < autoCollectTargets.length; i++) {
         const target = autoCollectTargets[i];
-
+        
         if (target.type == "gold") {
           target.size -= goldTargetDecay;
-
-          const maxVelo = 8 * goldTargetDrop;
+          
+          const maxVelo = 25 + 4 * goldTargetDrop;
           for (let i = 0; i < goldTargetDrop; i++) {
             particles.push({
               x: target.x,
               y: target.y,
-              xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-              yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+              xVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
+              yVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
               friction: 1,
               lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
               color: target.color,
@@ -1444,7 +1435,6 @@
         }
       }
     }
-    //#endregion
 
     //#region utility functions
     const randoColor = strength => {
@@ -1815,7 +1805,6 @@
       }
     }
     //#endregion
-
 
     const gameLoop = () => {
       const now = Date.now();
