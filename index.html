@@ -6,16 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvas</title>
   <style>
-    html,
+    html {
+      height: 100%;
+      background-color: linen;
+    }
     body {
       margin: 0;
-      padding: 0;
-      height: 100%;
-      width: 100%;
-      background-color: linen;
       align-items: center;
       justify-content: center;
       display: grid; 
+
+
+      overflow: hidden;
     }
 
     canvas {
@@ -26,7 +28,7 @@
 
 <body>
   <div id="main">
-    <canvas id="canvas" width="1600" height="900" style="pointer-events: none;"></canvas>
+    <canvas id="canvas" width="1600" height="900"></canvas>
   </div>
 
   <script defer>
@@ -56,9 +58,9 @@
     const shopButtonSize = 50;
     const minimumLabelWidth = 200;
 
-    let points = 0;
+    let points = 100000000;
     let pointsMult = 1;
-    let seeds = 0;
+    let seeds = 100000000;
     let particleBase = 1; // points from targets
     const particleSize = 8;
 
@@ -69,7 +71,7 @@
     let potencyBonus = 10; // points from target potency
     let minimumPotency = 0; // minimum potency (1=100%)
     let maxNormalPotency = .3; // maximum potency (1=100%)
-    let superPotentChance = .05; // chance for 100% potency (1=100%)
+    let superPotentChance = .5; // chance for 100% potency (1=100%)
     let superPotentValue = 3 // amount of bonus particles for super potency
 
     const targets = [];
@@ -1215,7 +1217,7 @@
         confetti: Math.trunc(potency * potencyBonus / 2 + breadth * breadthBonus / 2),
       };
 
-      if (superPotent) newTarget.stroke = "#aaaaaa";
+      if (superPotent) newTarget.stroke = "#ccc";
 
       targets.push(newTarget);
     }
@@ -1459,13 +1461,30 @@
     }
 
     const drawText = () => {
+      // general styles
       ctx.fillStyle = "black";
       ctx.lineWidth = 3;
       ctx.strokeStyle = "white";
       ctx.font = "18px serif";
 
+      // draw version code
       ctx.textAlign = "left";
       ctx.fillText(version, 10, 20);
+
+      // draw currencies
+      const sceneIsPrimary = Object.keys(sceneDoors).includes(scene);
+      ctx.textAlign = "center";
+      if (sceneIsPrimary) {
+        drawCurrencies(45);
+      } else {
+        drawCurrencies(canvas.height - 20);
+      }
+    }
+    
+    const drawDoors = () => {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "white";
+      ctx.font = "18px serif";
 
       const primaryScenes = Object.keys(sceneDoors);
       const secondaryScenes = Object.values(sceneDoors);
@@ -1473,53 +1492,57 @@
       const rightScene = sceneIsPrimary ? primaryScenes[(primaryScenes.indexOf(scene) + 1) % primaryScenes.length] : secondaryScenes[(secondaryScenes.indexOf(scene) + 1) % secondaryScenes.length];
       const leftScene = sceneIsPrimary ? primaryScenes[Math.abs(primaryScenes.indexOf(scene) - 1) % primaryScenes.length] : secondaryScenes[Math.abs(secondaryScenes.indexOf(scene) - 1) % secondaryScenes.length];
 
+      const halfHeight = canvas.height / 2;
+      const halfWidth = canvas.width / 2;
       if (primaryScenes.length > 1) {
         // draw right label
         ctx.textAlign = "right";
-        ctx.strokeText(`${rightScene} 🡆`, canvas.width - 20, canvas.height / 2);
-        ctx.fillText(`${rightScene} 🡆`, canvas.width - 20, canvas.height / 2);
+        ctx.fillStyle = "black";
+        ctx.strokeText(`${rightScene} 🡆`, canvas.width - 20, halfHeight);
+        ctx.fillText(`${rightScene} 🡆`, canvas.width - 20, halfHeight);
+        ctx.fillStyle = "#aaaa";
+        ctx.fillRect(canvas.width - 5, halfHeight - doorSize, 5, doorSize * 2);
 
         // draw left label
         ctx.textAlign = "left";
-        ctx.strokeText(`🡄 ${leftScene}`, 20, canvas.height / 2);
-        ctx.fillText(`🡄 ${leftScene}`, 20, canvas.height / 2);
+        ctx.fillStyle = "black";
+        ctx.strokeText(`🡄 ${leftScene}`, 20, halfHeight);
+        ctx.fillText(`🡄 ${leftScene}`, 20, halfHeight);
+        ctx.fillStyle = "#aaaa";
+        ctx.fillRect(5, halfHeight - doorSize, -5, doorSize * 2);
       }
 
       const upperScene = primaryScenes.find(key => sceneDoors[key] === scene);
       ctx.textAlign = "center";
       if (sceneDoors[scene]) { // draw bottom label
-        drawCurrencies(45);
-
-        ctx.strokeText("🡇", canvas.width / 2, canvas.height - 15);
-        ctx.fillText("🡇", canvas.width / 2, canvas.height - 15);
-        ctx.strokeText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
-        ctx.fillText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
+        ctx.fillStyle = "black";
+        ctx.strokeText("🡇", halfWidth, canvas.height - 15);
+        ctx.fillText("🡇", halfWidth, canvas.height - 15);
+        ctx.strokeText(sceneDoors[scene], halfWidth, canvas.height - 35);
+        ctx.fillText(sceneDoors[scene], halfWidth, canvas.height - 35);
+        ctx.fillStyle = "#aaa5";
+        ctx.fillRect(halfWidth - doorSize, canvas.height, doorSize * 2, -5);
       } else if (upperScene) { // draw top label
-        drawCurrencies(canvas.height - 20);
-
-        ctx.strokeText("🡅", canvas.width / 2, 20);
-        ctx.fillText("🡅", canvas.width / 2, 20);
-        ctx.strokeText(upperScene, canvas.width / 2, 35);
-        ctx.fillText(upperScene, canvas.width / 2, 35);
+        ctx.fillStyle = "black";
+        ctx.strokeText("🡅", halfWidth, 20);
+        ctx.fillText("🡅", halfWidth, 20);
+        ctx.strokeText(upperScene, halfWidth, 35);
+        ctx.fillText(upperScene, halfWidth, 35);
+        ctx.fillStyle = "#aaa5";
+        ctx.fillRect(halfWidth - doorSize, 5, doorSize * 2, -5);
       }
-
-      const mainTextWidth = 55;
-      const shopTextWidth = 55;
-      const gardenTextWidth = 65;
     }
 
     const randomEvents = () => {
-      // target appears
+      // normal targets
       if (Math.random() < targetChance && targets.length < maxTargets) spawnTarget();
 
-      // dark target appears
+      // special targets
       if (darkTargetUnlocked && Math.random() < darkTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("dark");
-      // explosive target appears
       if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("explosive");
-      // gold target appears
       if (goldTargetUnlocked && Math.random() < goldTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("gold");
 
-      // rain target appears
+      // garden targets
       if (rainUnlocked && Math.random() < rainTargetChance && gardenTargets.length < maxGardenTargets) spawnSpecialTarget("rain");
     }
 
@@ -1589,6 +1612,7 @@
 
       drawParticles();
       drawText();
+      drawDoors();
       drawPlayer();
 
       if (shopFocus) {
@@ -1823,6 +1847,28 @@
 
     setupPlayerControls();
     gameLoop();
+
+
+    function scaleCanvas() {
+      const scale = {
+        x: window.innerWidth / canvas.width,
+        y: window.innerHeight / canvas.height
+      }
+
+      var stretchHeightFirst = scale.x > scale.y;
+
+      // Apply scaling
+      if (stretchHeightFirst) {
+        canvas.style.transformOrigin = 'top';
+        canvas.style.transform = 'scale(' + scale.y + ')';
+      } else {
+        canvas.style.transformOrigin = 'top';
+        canvas.style.transform = 'scale(' + scale.x + ')';
+      }
+    }
+    window.addEventListener('resize', scaleCanvas);    
+    scaleCanvas();
+
   </script>
 </body>
 </html>
