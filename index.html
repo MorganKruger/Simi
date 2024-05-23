@@ -9,25 +9,72 @@
     html {
       height: 100%;
       background-color: linen;
+      touch-action: none;
     }
+
     body {
       margin: 0;
       align-items: center;
       justify-content: center;
-      display: grid; 
-
-
+      display: grid;
       overflow: hidden;
     }
 
     canvas {
       background-color: #ffffff;
     }
+
+    #touch-controller {
+      display: none;
+      position: absolute;
+      grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+      user-select: none;
+      z-index: 1;
+
+      &>* {
+        background-color: #00000029;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 3em;
+
+        &:active {
+          background-color: transparent;
+        }
+      }
+
+      & #up {
+        grid-area: 1 / 2;
+      }
+
+      & #left {
+        grid-area: 2 / 1;
+      }
+
+      & #adjust-controller {
+        grid-area: 2 / 2;
+      }
+
+      & #right {
+        grid-area: 2 / 3;
+      }
+
+      & #down {
+        grid-area: 3 / 2;
+      }
+    }
   </style>
 </head>
 
 <body>
   <div id="main">
+    <div id="touch-controller">
+      <div id="up">&blacktriangle;</div>
+      <div id="left">&blacktriangleleft;</div>
+      <div id="adjust-controller">&there4;</div>
+      <div id="right">&blacktriangleright;</div>
+      <div id="down">&blacktriangledown;</div>
+    </div>
     <canvas id="canvas" width="1600" height="900"></canvas>
   </div>
 
@@ -35,8 +82,15 @@
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
     const FPS = 60;
-    const keys = {};
+    const controller = {
+      up: false,
+      left: false,
+      right: false,
+      down: false,
+      interact: false,
+    }
     const version = "v0.4.0";
+    const userIsMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     const player = {
       x: canvas.width / 2,
@@ -55,6 +109,7 @@
     const doorSize = 60;
 
     let shopFocus;
+    let interactionMessage = userIsMobile ? "tap" : "E";
     const shopButtonSize = 50;
     const minimumLabelWidth = 200;
 
@@ -71,7 +126,7 @@
     let potencyBonus = 10; // points from target potency
     let minimumPotency = 0; // minimum potency (1=100%)
     let maxNormalPotency = .3; // maximum potency (1=100%)
-    let superPotentChance = .5; // chance for 100% potency (1=100%)
+    let superPotentChance = .05; // chance for 100% potency (1=100%)
     let superPotentValue = 3 // amount of bonus particles for super potency
 
     const targets = [];
@@ -101,10 +156,10 @@
     let goldTargetUnlocked = false;
     let goldTargetChance = .0005; // chance for a new gold target to appear each frame (1=100%)
     let goldTargetDecay = 1; // size reduction per frame of the gold target
-    let goldTargetSize = 50; // size reduction per frame of the gold target
+    let goldTargetSize = 45; // size reduction per frame of the gold target
     const goldTargetMinSize = 25; // minimum size before a gold target disappears
     let goldTargetDrop = 1; // gold target shoots 2 particles per frame instead of 1
-    let goldAutoCollect = false; 
+    let goldAutoCollect = false;
 
     let gardenIsUnlocked = false; // boolean determines whether the garden is enabled
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
@@ -113,9 +168,9 @@
     let cropHarvestBonus = 0; // multiplies the amount of seeds harvested from garden crops
     let gardenStrips = 0; // sum count of garden strips across all plots
     let rabbitSpeed = 15; // max rabbit speed
-    let minWetLifespan = 3000; // minimum amount of frames before garden plot has isWet set to "false"
-    let wetRandRange = 2000; // the range of frames after the minWetLifespan for which a garden plot may remain wet
-    let sunlampUnlocked = false;
+    let minWetness = 3000; // minimum amount of frames before garden plot has wetness set to "false"
+    let wetRandRange = 2000; // the range of frames after the minWetness for which a garden plot may remain wet
+    let fertilizerAmount = 200; // number of crop harvests before a plot goes infertile again
     const maxGardenTargets = 2;
     //
     let rainUnlocked = false;
@@ -149,7 +204,7 @@
         title: "+1 Drop Per Target",
         unlocked: true,
         level: 0,
-        maxLevel: 14,
+        maxLevel: 9,
         price: 20,
         x: undefined,
         y: undefined,
@@ -163,7 +218,7 @@
             unlockShopItems("max targets");
           }
 
-          if (this.level + shopItems.find(e => e.id == "max targets").level == 8) {
+          if (this.level + shopItems.find(e => e.id == "max targets").level == 6) {
             unlockShopItems("double target spawn", "half pick up time");
           }
 
@@ -180,8 +235,8 @@
         title: "+10 Max Targets",
         unlocked: false,
         level: 0,
-        maxLevel: 19,
-        price: 100,
+        maxLevel: 29,
+        price: 30,
         x: undefined,
         y: undefined,
         detail: maxTargets,
@@ -189,11 +244,11 @@
           if (this.level == 1) {
             unlockShopItems("max potency", "max target width", "unlock garden");
           }
-          this.price = Math.round(this.price * 1.5);
+          this.price = Math.round(30 + 30 * this.level ** 1.6);
           maxTargets += 10;
           this.detail = maxTargets;
 
-          if (this.level + shopItems.find(e => e.id == "drop per target").level == 8) {
+          if (this.level + shopItems.find(e => e.id == "drop per target").level == 6) {
             unlockShopItems("double target spawn", "half pick up time");
           }
 
@@ -217,7 +272,7 @@
           if (this.level == 1) {
             unlockShopItems("super potent chance")
           }
-          this.price += 200;
+          this.price = 100 + Math.round(50 * this.level ** 2);
           maxNormalPotency += .05;
           this.detail = `${Math.round(maxNormalPotency * 100)}%`;
 
@@ -254,12 +309,12 @@
         unlocked: false,
         level: 0,
         maxLevel: 40,
-        price: 50,
+        price: 25,
         x: undefined,
         y: undefined,
         detail: breadthSizeBonus,
         onPurchase: function () {
-          this.price += 50;
+          this.price = 25 + 15 * this.level;
           breadthSizeBonus += 2;
           this.detail = breadthSizeBonus;
 
@@ -646,7 +701,7 @@
         onPurchase: function () {
           gardenIsUnlocked = true;
           sceneDoors["garden"] = "farmers market";
-          this.title = "Garden Unlocked"
+          shopItems.splice(shopItems.indexOf(this), 1);
         }
       }
     ];
@@ -667,12 +722,11 @@
         onPurchase: function () {
           gardenPlots.push({
             x: null, y: null,
-            isWet: rainDuration > 0,
-            wetLifespan: Math.trunc(Math.random() * wetRandRange + minWetLifespan),
-            isFertile: false,
+            wetness: rainDuration > 0 ? Math.trunc(Math.random() * wetRandRange + minWetness) : 0,
+            fertility: 0,
             strips: [],
           });
-          this.price = 15000 * this.level;
+          this.price = Math.round(2500 * this.level ** 1.6);
           this.seedPrice = 100 * this.level;
 
           if (this.level == 1) {
@@ -686,7 +740,7 @@
           if (this.level == this.maxLevel) {
             this.title = `${gardenPlots.length} Garden Plots`;
           }
-          
+
           // update the water + enrich upgrades
           farmersMarketItems.find(e => e.id == "water plot").refresh();
           farmersMarketItems.find(e => e.id == "enrich plot").refresh();
@@ -707,11 +761,10 @@
         y: undefined,
         detail: null,
         onPurchase: function () {
-          if (this.level == 1) {
-            unlockFarmersMarketItems("crop harvest", "rabbit");
-          }
+          this.price = Math.round(500 * this.level ** 1.5);
+          this.seedPrice = 20 * this.level;
+          this.detail = ++gardenStrips;
 
-          gardenStrips += 1;
           gardenPlots[Math.floor((gardenStrips - 1) / 5)].strips.push([{
             x: null, y: null,
             growth: 0,
@@ -733,10 +786,10 @@
             growth: 0,
             confetti: 2 + Math.round(Math.random()),
           },]);
-          this.price = 2500 * this.level;
-          this.seedPrice = 20 * this.level;
-          this.detail = gardenStrips;
 
+          if (this.level == 1) {
+            unlockFarmersMarketItems("crop harvest", "rabbit");
+          }
           if (this.level == this.maxLevel) {
             this.detail = null;
             this.title = `${gardenStrips} Garden Rows`;
@@ -750,35 +803,28 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 2000,
+        price: 1000,
         seedPrice: 10,
         x: undefined,
         y: undefined,
         detail: null,
-        purchasedBefore: true,
+        purchasedBefore: false,
         onPurchase: function () {
           for (let i = 0; i < gardenPlots.length; i++) {
             const plot = gardenPlots[i];
-            if (plot.isWet) continue;
-            plot.isWet = true;
-            plot.wetLifespan = Math.trunc(Math.random() * wetRandRange + minWetLifespan);
-            break;
+            if (plot.wetness < 1) {
+              plot.wetness = Math.trunc(Math.random() * wetRandRange + minWetness);
+              break;
+            };
           }
-
-          this.price = 2000 * this.level;
-          this.seedPrice = 200 * this.level;
-          this.purchasedBefore = false;
-
-          if (this.level == this.maxLevel) {
-            this.title = "All Plots Watered";
-          }
+          this.refresh();
         },
-        refresh: function() {
+        refresh: function () {
           this.maxLevel = gardenPlots.length;
-          this.level = gardenPlots.filter(plot => plot.isWet).length;
-          this.price = 2000 * this.level;
-          this.seedPrice = 200 * this.level;
-          
+          this.level = gardenPlots.filter(plot => plot.wetness).length;
+          this.price = 1000 + 2000 * this.level;
+          this.seedPrice = 10 + 10 * this.level;
+
           if (this.level == this.maxLevel) {
             this.title = "All Plots Watered";
           } else {
@@ -792,32 +838,27 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 5000,
-        seedPrice: 10,
+        price: 3000,
+        seedPrice: 20,
         x: undefined,
         y: undefined,
         detail: null,
-        purchasedBefore: true,
+        purchasedBefore: false,
         onPurchase: function () {
           for (let i = 0; i < gardenPlots.length; i++) {
             const plot = gardenPlots[i];
-            if (plot.isFertile) continue;
-            plot.isFertile = true;
-            break;
+            if (!plot.fertility) {
+              plot.fertility = fertilizerAmount;
+              break;
+            }
           }
-          this.price = 5000 * this.level;
-          this.seedPrice = 200 * this.level;
-          this.purchasedBefore = false;
-
-          if (this.level == this.maxLevel) {
-            this.title = "All Plots Enriched";
-          }
+          this.refresh();
         },
         refresh: function () {
           this.maxLevel = gardenPlots.length;
-          this.level = gardenPlots.filter(plot => plot.isWet).length;
-          this.price = 5000 * this.level;
-          this.seedPrice = 200 * this.level;
+          this.level = gardenPlots.filter(plot => plot.fertility).length;
+          this.price = 3000 + 3000 * this.level;
+          this.seedPrice = 20 + 10 * this.level;
 
           if (this.level == this.maxLevel) {
             this.title = "All Plots Enriched";
@@ -841,7 +882,7 @@
         detail: cropHarvestBonus,
         onPurchase: function () {
           cropHarvestBonus += 1;
-          this.price += 1000 * this.level * 2;
+          this.price = 1000 + 2000 * this.level;
           this.seedPrice *= 2;
           this.detail = cropHarvestBonus;
 
@@ -857,29 +898,30 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 500000,
-        seedPrice: 5000,
+        price: 200000,
+        seedPrice: 2500,
         x: undefined,
         y: undefined,
         detail: null,
         onPurchase: function () {
-          sunlampUnlocked = true;
           cropGrowthChance *= 2;
+          this.title = "Sunlamp";
         }
       },
       {
         id: "unlock rain",
-        title: "Unlock Rain",
+        title: "Discover Cloud Seeding",
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 500000,
-        seedPrice: 5000,
+        price: 200000,
+        seedPrice: 1000,
         x: undefined,
         y: undefined,
         detail: null,
         onPurchase: function () {
           rainUnlocked = true;
+          this.title = "Cloud Seeding";
         }
       },
       {
@@ -888,8 +930,8 @@
         unlocked: false,
         level: 0,
         maxLevel: 3,
-        price: 5000,
-        seedPrice: 250,
+        price: 500,
+        seedPrice: 30,
         x: undefined,
         y: undefined,
         detail: cropHarvestBonus,
@@ -909,8 +951,8 @@
             isCollector: true,
             size: 16,
           });
-          this.price *= 5;
-          this.seedPrice *= 3;
+          this.price *= 20;
+          this.seedPrice *= 10;
 
           if (this.level == this.maxLevel) {
             this.title = `${this.level} Rabbits`;
@@ -950,13 +992,17 @@
             for (let k = 0; k < strip.length; k++) {
               const crop = strip[k];
 
-              if (crop.growth >= 1 && rectsDoCollide(collider, { x: crop.x, y: crop.y, size: maxCropSize })) harvestCrop(crop);
+              if (crop.growth >= 1 && rectsDoCollide(collider, { x: crop.x, y: crop.y, size: maxCropSize })) {
+                harvestCrop(crop);
+                // if not zero, -1, then, if zero, update shop item
+                if (plot.fertility && !--plot.fertility) farmersMarketItems.find(e => e.id == "enrich plot").refresh();
+              }
             }
           }
         }
         for (let i = 0; i < gardenTargets.length; i++) {
           const target = gardenTargets[i];
-          
+
           if (rectsDoCollide(collider, target)) collectGardenTarget(target);
         }
       } else if (mode == "farmers market") {
@@ -998,13 +1044,124 @@
 
     //#region player
     const setupPlayerControls = () => {
+      document.body.addEventListener("contextmenu", e => e.preventDefault());
+
+      setupKeyboardControls();
+
+      if (userIsMobile) setupTouchControls();
+    }
+
+    const setupKeyboardControls = () => {
       window.addEventListener("keydown", (event) => {
-        keys[event.key.toLowerCase()] = true;
+        switch (event.key.toLowerCase()) {
+          case "w":
+            controller.up = true;
+            break;
+          case "arrowup":
+            controller.up = true;
+            break;
+          case "a":
+            controller.left = true;
+            break;
+          case "arrowleft":
+            controller.left = true;
+            break;
+          case "d":
+            controller.right = true;
+            break;
+          case "arrowright":
+            controller.right = true;
+            break;
+          case "s":
+            controller.down = true;
+            break;
+          case "arrowdown":
+            controller.down = true;
+            break;
+          case "e":
+            controller.interact = true;
+            break;
+        }
       });
 
       window.addEventListener("keyup", (event) => {
-        keys[event.key.toLowerCase()] = false;
+        switch (event.key.toLowerCase()) {
+          case "w":
+            controller.up = false;
+            break;
+          case "arrowup":
+            controller.up = false;
+            break;
+          case "a":
+            controller.left = false;
+            break;
+          case "arrowleft":
+            controller.left = false;
+            break;
+          case "d":
+            controller.right = false;
+            break;
+          case "arrowright":
+            controller.right = false;
+            break;
+          case "s":
+            controller.down = false;
+            break;
+          case "arrowdown":
+            controller.down = false;
+            break;
+          case "e":
+            controller.interact = false;
+            break;
+        }
       });
+    }
+
+    const setupTouchControls = () => {
+      const touchController = document.getElementById("touch-controller");
+      const controllerSize = Math.min(window.innerWidth, window.innerHeight) / 2;
+      const halfController = controllerSize / 2;
+      touchController.style.display = "grid";
+      touchController.style.gap = controllerSize / 50 + "px";
+      touchController.style.height = controllerSize + "px";
+      touchController.style.width = controllerSize + "px";
+      replaceTouchController();
+
+      const adjustmentControl = document.getElementById("adjust-controller");
+      adjustmentControl.addEventListener("touchmove", e => {
+        const touch = e.changedTouches[0]
+        touchController.style.left = `${touch.clientX - halfController}px`;
+        touchController.style.top = `${touch.clientY - halfController}px`;
+      });
+      adjustmentControl.addEventListener("touchend", e => {
+        const rect = touchController.getBoundingClientRect();
+        if (rect.left < -halfController || rect.right > document.body.clientWidth + halfController || rect.top < -halfController || rect.bottom > document.body.clientHeight) {
+          replaceTouchController();
+        }
+      });
+      adjustmentControl.addEventListener("touchcancel", e => {
+        const rect = touchController.getBoundingClientRect();
+        if (rect.left < -halfController || rect.right > document.body.clientWidth + halfController || rect.top < -halfController || rect.bottom > document.body.clientHeight) {
+          replaceTouchController();
+        }
+      });
+
+      ["up", "left", "right", "down"].forEach(direction => {
+        const control = touchController.children[direction];
+        control.addEventListener("touchstart", e => controller[direction] = true);
+        control.addEventListener("touchend", e => controller[direction] = false);
+        control.addEventListener("touchcancel", e => controller[direction] = false);
+      })
+
+      canvas.addEventListener("touchstart", e => controller.interact = true);
+      canvas.addEventListener("touchend", e => controller.interact = false);
+      canvas.addEventListener("touchcancel", e => controller.interact = false);
+    }
+
+    const replaceTouchController = () => {
+      const controller = document.getElementById("touch-controller");
+      controller.style.left = canvas.getBoundingClientRect().left + "px";
+      controller.style.top = canvas.getBoundingClientRect().top + "px";
     }
 
     const drawPlayer = () => {
@@ -1016,15 +1173,10 @@
       let xSign = Math.sign(player.xVelocity);
       let ySign = Math.sign(player.yVelocity);
 
-      const left = keys["a"] || keys["arrowleft"];
-      const right = keys["d"] || keys["arrowright"];
-      const up = keys["w"] || keys["arrowup"];
-      const down = keys["s"] || keys["arrowdown"];
-
       // x momentum
-      if (left || right) {
-        if (left) player.xVelocity = Math.max(player.xVelocity - player.acceleration, -player.maxVelocity);
-        if (right) player.xVelocity = Math.min(player.xVelocity + player.acceleration, player.maxVelocity);
+      if (controller.left || controller.right) {
+        if (controller.left) player.xVelocity = Math.max(player.xVelocity - player.acceleration, -player.maxVelocity);
+        if (controller.right) player.xVelocity = Math.min(player.xVelocity + player.acceleration, player.maxVelocity);
 
         xSign = Math.sign(player.xVelocity);
       } else {
@@ -1032,9 +1184,9 @@
       }
 
       // y momentum 
-      if (up || down) {
-        if (up) player.yVelocity = Math.max(player.yVelocity - player.acceleration, -player.maxVelocity);
-        if (down) player.yVelocity = Math.min(player.yVelocity + player.acceleration, player.maxVelocity);
+      if (controller.up || controller.down) {
+        if (controller.up) player.yVelocity = Math.max(player.yVelocity - player.acceleration, -player.maxVelocity);
+        if (controller.down) player.yVelocity = Math.min(player.yVelocity + player.acceleration, player.maxVelocity);
 
         ySign = Math.sign(player.yVelocity);
       } else {
@@ -1045,7 +1197,7 @@
       player.x += player.xVelocity;
       player.y += player.yVelocity;
 
-      // keep the player on screen
+      // keep the player on screen and handle doorway interactions
       const primaryScenes = Object.keys(sceneDoors);
       const secondaryScenes = Object.values(sceneDoors);
       const sceneIsPrimary = secondaryScenes.indexOf(scene) < 0;
@@ -1158,7 +1310,7 @@
           if (particle.x < 0) particle.xVelocity = Math.abs(particle.yVelocity);
           if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
         }
-        
+
         if (particle.xVelocity || particle.yVelocity) {
           // move
           particle.x += particle.xVelocity;
@@ -1258,7 +1410,7 @@
           size: Math.random() * goldTargetSize / 2 + goldTargetSize,
           color: "gold",
           stroke: "#E0B600",
-          strokeSize: 3, 
+          strokeSize: 3,
           confetti: 0,
           type: type,
         };
@@ -1362,14 +1514,14 @@
             lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
             color: target.color,
             onDeath: () => {
-              points += 5 * pointsMult;
+              points += 10 * pointsMult;
             },
           });
         }
 
         if (target.size < goldTargetMinSize) specialTargets.splice(specialTargets.indexOf(target), 1);
       }
-      
+
       if (target.type == "gold") return;
       specialTargets.splice(specialTargets.indexOf(target), 1);
     }
@@ -1388,10 +1540,9 @@
         // water plots
         for (let i = 0; i < gardenPlots.length; i++) {
           const plot = gardenPlots[i];
-          plot.isWet = true;
-          plot.wetLifespan = Math.trunc(Math.random() * wetRandRange + minWetLifespan);
+          plot.wetness = Math.trunc(Math.random() * wetRandRange + minWetness);
         }
-        farmersMarketItems.find(e=>e.id == "water plot").refresh();
+        farmersMarketItems.find(e => e.id == "water plot").refresh();
 
         // begin target-collection splash effect 
         for (let i = 0; i < target.confetti; i++) {
@@ -1413,10 +1564,10 @@
     const doAutoCollection = () => {
       for (let i = 0; i < autoCollectTargets.length; i++) {
         const target = autoCollectTargets[i];
-        
+
         if (target.type == "gold") {
           target.size -= goldTargetDecay;
-          
+
           const maxVelo = 25 + 4 * goldTargetDrop;
           for (let i = 0; i < goldTargetDrop; i++) {
             particles.push({
@@ -1480,7 +1631,7 @@
         drawCurrencies(canvas.height - 20);
       }
     }
-    
+
     const drawDoors = () => {
       ctx.lineWidth = 3;
       ctx.strokeStyle = "white";
@@ -1500,7 +1651,7 @@
         ctx.fillStyle = "black";
         ctx.strokeText(`${rightScene} 🡆`, canvas.width - 20, halfHeight);
         ctx.fillText(`${rightScene} 🡆`, canvas.width - 20, halfHeight);
-        ctx.fillStyle = "#aaaa";
+        ctx.fillStyle = "#00000029";
         ctx.fillRect(canvas.width - 5, halfHeight - doorSize, 5, doorSize * 2);
 
         // draw left label
@@ -1508,7 +1659,7 @@
         ctx.fillStyle = "black";
         ctx.strokeText(`🡄 ${leftScene}`, 20, halfHeight);
         ctx.fillText(`🡄 ${leftScene}`, 20, halfHeight);
-        ctx.fillStyle = "#aaaa";
+        ctx.fillStyle = "#00000029";
         ctx.fillRect(5, halfHeight - doorSize, -5, doorSize * 2);
       }
 
@@ -1520,7 +1671,7 @@
         ctx.fillText("🡇", halfWidth, canvas.height - 15);
         ctx.strokeText(sceneDoors[scene], halfWidth, canvas.height - 35);
         ctx.fillText(sceneDoors[scene], halfWidth, canvas.height - 35);
-        ctx.fillStyle = "#aaa5";
+        ctx.fillStyle = "#00000029";
         ctx.fillRect(halfWidth - doorSize, canvas.height, doorSize * 2, -5);
       } else if (upperScene) { // draw top label
         ctx.fillStyle = "black";
@@ -1528,7 +1679,7 @@
         ctx.fillText("🡅", halfWidth, 20);
         ctx.strokeText(upperScene, halfWidth, 35);
         ctx.fillText(upperScene, halfWidth, 35);
-        ctx.fillStyle = "#aaa5";
+        ctx.fillStyle = "#00000029";
         ctx.fillRect(halfWidth - doorSize, 5, doorSize * 2, -5);
       }
     }
@@ -1560,15 +1711,15 @@
           isCosmetic: true,
         });
       }
-      
+
       rainDuration -= 1;
     }
-    
+
     const update = () => {
       movePlayer();
       moveParticles();
       randomEvents();
-      
+
       growCrops();
       if (!rainDuration) {
         updateGardenWetness();
@@ -1637,7 +1788,7 @@
         });
       }
 
-      crop.growth = null;
+      crop.growth = 0;
     }
 
     const growCrops = () => {
@@ -1650,7 +1801,7 @@
           for (let k = 0; k < strip.length; k++) {
             const crop = strip[k];
 
-            if (crop.growth < 1 && Math.random() < cropGrowthChance) crop.growth = Math.min(crop.growth + .1 + (plot.isFertile ? .1 : 0) + (plot.isWet ? .1 : 0), 1);
+            if (crop.growth < 1 && Math.random() < cropGrowthChance) crop.growth = Math.min(crop.growth + .1 + (plot.fertility ? .15 : 0) + (plot.wetness ? .1 : 0), 1);
           }
         }
       }
@@ -1659,12 +1810,9 @@
     const updateGardenWetness = () => {
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
-        
-        plot.wetLifespan -= 1;
-        if (plot.wetLifespan < 1) {
-          plot.isWet = false;
-          farmersMarketItems.find(e=>e.id == "water plot").refresh();
-        }
+
+        // if not zero, -1, then, if zero, update shop item
+        if (plot.wetness && !--plot.wetness) farmersMarketItems.find(e => e.id == "water plot").refresh();
       }
     }
 
@@ -1689,7 +1837,7 @@
       // draw plot
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
-        const plotColor = `hsl(36, 39%, ${60 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+        const plotColor = `hsl(36, 39%, ${60 - (plot.fertility ? 15 : 0) - (plot.wetness ? 15 : 0)}%)`;
         const gardenGridX = i % plotsPerGridRow;
         const gardenGridY = Math.floor(i / plotsPerGridRow);
 
@@ -1703,7 +1851,7 @@
         for (let j = 0; j < plot.strips.length; j++) {
           const strip = plot.strips[j];
 
-          const stripColor = `hsl(36, 39%, ${50 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+          const stripColor = `hsl(36, 39%, ${50 - (plot.fertility ? 15 : 0) - (plot.wetness ? 15 : 0)}%)`;
 
           const stripX = plot.x + plotPadding;
           const stripY = plot.y + plotPadding + j * stripHeight + j * plotPadding;
@@ -1735,14 +1883,15 @@
     }
 
     const detectPurchase = () => {
-      if (keys["e"]) {
+      if (controller.interact) {
         shopFocus.level += 1;
         points -= shopFocus.price;
         if (shopFocus.seedPrice) seeds -= shopFocus.seedPrice;
         shopFocus.onPurchase();
 
-        const maxVelo = 2 * shopFocus.level + 10;
-        for (let i = 0; i < Math.min(7 * shopFocus.level, 100); i++) {
+        const drops = shopFocus.level == shopFocus.maxLevel ? Math.min(25 * shopFocus.level, 150) : Math.min(7 * shopFocus.level, 100);
+        const maxVelo = drops / 8 + 10;
+        for (let i = 0; i < drops; i++) {
           shopParticles.push({
             x: shopFocus.x,
             y: shopFocus.y,
@@ -1753,7 +1902,7 @@
             color: shopFocus.level == shopFocus.maxLevel ? "gold" : "rgb(0, 200, 0)",
           });
         }
-        keys["e"] = false;
+        controller.interact = false;
       }
     }
 
@@ -1763,8 +1912,8 @@
       if (ctx.fillStyle != "lime") ctx.fillStyle = "lime";
       if (ctx.lineWidth != 3) ctx.lineWidth = 3;
       if (ctx.strokeStyle != "black") ctx.strokeStyle = "black";
-      ctx.strokeText("E", player.x, player.y - 50);
-      ctx.fillText("E", player.x, player.y - 50);
+      ctx.strokeText(interactionMessage, player.x, player.y - 50);
+      ctx.fillText(interactionMessage, player.x, player.y - 50);
     }
 
     const updateShopPositions = itemArray => {
@@ -1815,7 +1964,7 @@
         ctx.font = "20px serif";
         ctx.fillStyle = "black";
         ctx.textAlign = "center";
-        const titleText = item.detail ? `${item.title} : ${item.detail}`: item.title;
+        const titleText = item.detail ? `${item.title} : ${item.detail}` : item.title;
         ctx.fillText(titleText, item.x, item.y + shopButtonSize);
 
         if (!(item.level < item.maxLevel)) continue;
@@ -1845,30 +1994,39 @@
     // start the game with a few targets
     for (let i = 0; i < 5; i++) spawnTarget();
 
-    setupPlayerControls();
-    gameLoop();
-
-
+    //#region scale the canvas to the screen
     function scaleCanvas() {
       const scale = {
-        x: window.innerWidth / canvas.width,
-        y: window.innerHeight / canvas.height
+        x: window.outerWidth / canvas.width,
+        y: window.outerHeight / canvas.height
       }
 
       var stretchHeightFirst = scale.x > scale.y;
 
       // Apply scaling
       if (stretchHeightFirst) {
-        canvas.style.transformOrigin = 'top';
-        canvas.style.transform = 'scale(' + scale.y + ')';
+        canvas.style.transformOrigin = "top";
+        canvas.style.transform = `scale(${scale.y})`;
       } else {
-        canvas.style.transformOrigin = 'top';
-        canvas.style.transform = 'scale(' + scale.x + ')';
+        canvas.style.transformOrigin = "top";
+        canvas.style.transform = `scale(${scale.x})`;
       }
     }
-    window.addEventListener('resize', scaleCanvas);    
+    window.addEventListener("resize", scaleCanvas);
+    //#endregion
+    
     scaleCanvas();
+    setupPlayerControls();
+    gameLoop();
 
+    //#region warn against using portrait screen orientation
+    if (screen.orientation.angle === 0 || screen.orientation.angle === 180) alert("This game is probably better in landscape orientation.");
+    screen.orientation.addEventListener("change", e => {
+      if (e.target.angle === 0 || e.target.angle === 180)
+        alert("This game is probably better in landscape orientation.");
+    });
+    //#endregion
   </script>
 </body>
+
 </html>
