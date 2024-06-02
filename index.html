@@ -91,7 +91,7 @@
       interact: false,
     }
     const version = "v0.4.1";
-    const userHasTouchScreen = navigator.maxTouchPoints > 0;
+    const userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
 
     const player = {
       x: canvas.width / 2,
