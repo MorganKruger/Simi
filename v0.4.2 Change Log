@@ -1,0 +1,7 @@
+v0.4.2 (The Access-And-Control Update)
+
+split "show drops" setting into 2; one for target drops; one for cosmetic particles
+
+added tooltips to every shop/setting item and reduced details on shop items themselves
+
+fixed a minor bug with the touch controller when enabling touch-screen on a device mid-game.
