@@ -10,6 +10,7 @@
       height: 100%;
       background-color: linen;
       touch-action: none;
+      user-select: none;
       overflow: hidden;
     }
 
@@ -20,17 +21,35 @@
       display: grid;
       overflow: hidden;
     }
-
+    
     canvas {
       background-color: #ffffff;
     }
 
+    #tooltip {
+      z-index: 1;
+      opacity: 0;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 2rem;
+      background-color: #00000082;
+      color: white;
+      text-align: center;
+      transition-duration: 105ms;
+      transition-delay: 200ms;
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 600;
+      text-shadow: 0 0 8px black;
+    }
+    
     #touch-controller {
       display: none;
       position: absolute;
       grid-template: repeat(3, 1fr) / repeat(3, 1fr);
       user-select: none;
-      z-index: 1;
+      z-index: 2;
 
       & > * {
         background-color: #00000029;
@@ -64,6 +83,7 @@
         grid-area: 3 / 2;
       }
     }
+
   </style>
 </head>
 
@@ -76,6 +96,7 @@
       <div id="right">&blacktriangleright;</div>
       <div id="down">&blacktriangledown;</div>
     </div>
+    <div id="tooltip"></div>
     <canvas id="canvas" width="1600" height="900"></canvas>
   </div>
 
@@ -90,8 +111,8 @@
       down: false,
       interact: false,
     }
-    const version = "v0.4.1";
-    const userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+    const version = "v0.4.2";
+    let userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
 
     const player = {
       x: canvas.width / 2,
@@ -133,7 +154,8 @@
     let showCurrency = true;
     let showNormalTargets = true;
     let showSpecialTargets = true;
-    let showParticles = true;
+    let showCosmeticParticles = true;
+    let showDrops = true;
     let strictTargetAmountLimit = false;
     let useTouchController = true;
     let touchControllerSize = ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2};
@@ -147,7 +169,7 @@
 
     let points = 100000000;
     let pointsMult = 1; // base multiplier appllied when gaining points
-    let seeds = 100000000;
+    let leaves = 100000000;
     let particleBase = 1; // points from targets
     const particleSize = 8; // visible size of most particles
 
@@ -189,8 +211,8 @@
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
     let cropGrowthChance = .0005; // chance for garden crops to increase in their 'growth' value by some amount
     const maxCropSize = 28; // maximum physical size for crop display and collision
-    let cropHarvestBonus = 0; // multiplies the amount of seeds harvested from garden crops
-    let gardenStrips = 0; // sum count of garden strips across all plots
+    let cropHarvestBonus = 0; // multiplies the amount of leaves harvested from garden crops
+    let gardenStripCount = 0; // sum count of garden strips across all plots
     let rabbitSpeed = 15; // max rabbit speed
     let minWetness = 7000; // minimum amount of frames before garden plot has wetness set to "false"
     let wetRandRange = 4000; // the max amount of frames after the minWetness for which a garden plot may remain wet
@@ -225,7 +247,7 @@
     }
 
     let shopItems = [
-      // basic upgrades
+      //#region basic upgrades
       {
         id: "drop per target",
         title: "+1 Drop Per Target",
@@ -235,11 +257,12 @@
         price: 20,
         x: undefined,
         y: undefined,
-        detail: particleBase,
+        tooltip: "Increase the base amount of drops when collecting a normal target",
         onPurchase: function () {
           this.price += 30 * this.level;
           particleBase += 1;
-          this.detail = particleBase;
+
+          this.tooltip = "Increase the base amount of drops when collecting a normal target";
 
           if (this.level == 1) {
             unlockItems(shopItems, "max targets");
@@ -251,9 +274,10 @@
 
           if (this.level == this.maxLevel) {
             unlockItems(shopItems, "double points");
-
-            this.detail = null;
             this.title = `+${particleBase} Drops Per Target`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -266,22 +290,24 @@
         price: 30,
         x: undefined,
         y: undefined,
-        detail: maxTargets,
+        tooltip: "Increase the maximum amount of normal targets allowed before they stop appearing.",
         onPurchase: function () {
           if (this.level == 1) {
             unlockItems(shopItems, "max potency", "max target width", "unlock garden");
           }
           this.price = Math.round(30 + 30 * this.level ** 1.6);
           maxTargets += 10;
-          this.detail = maxTargets;
+          this.tooltip = "Increase the maximum amount of normal targets allowed before they stop appearing.";
 
           if (this.level + shopItems.find(item => item.id == "drop per target").level == 6) {
             unlockItems(shopItems, "double target spawn", "turtle");
           }
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${maxTargets} Max Targets`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -294,18 +320,20 @@
         price: 100,
         x: undefined,
         y: undefined,
-        detail: `${Math.round(maxNormalPotency * 100)}%`,
+        tooltip: "More colorful targets appear\n\n\n\n* Brighter, more vibrant targets produce more drops when collected.",
         onPurchase: function () {
           if (this.level == 1) {
             unlockItems(shopItems, "super potent chance")
           }
           this.price = 100 + Math.round(50 * this.level ** 2);
           maxNormalPotency += .05;
-          this.detail = `${Math.round(maxNormalPotency * 100)}%`;
+          this.tooltip = "More colorful targets appear\n\n* Brighter, more vibrant targets produce more drops when collected.";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -318,41 +346,47 @@
         price: 50,
         x: undefined,
         y: undefined,
-        detail: `${Math.round(superPotentChance * 100)}%`,
+        tooltip: "Increase chance for very bright targets to appear.\n\n* Super-potent targets produce significantly more drops.",
         onPurchase: function () {
           superPotentChance += .01;
           this.price += 50;
-          this.detail = `${Math.round(superPotentChance * 100)}%`;
+          this.tooltip = "Increase chance for very bright targets to appear.\n\n* Super-potent targets produce significantly more drops.";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${Math.round(superPotentChance * 100)}% Super Potent Chance`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
         id: "max target width",
-        title: "+2 Max Target Width",
+        title: "+2 Max Target Size",
         unlocked: false,
         level: 0,
         maxLevel: 40,
         price: 25,
         x: undefined,
         y: undefined,
+        tooltip: "Larger normal targets can appear\n\n* Larger targets are easier to collect and produce more drops",
         detail: breadthSizeBonus,
         onPurchase: function () {
           this.price = 25 + 15 * this.level;
           breadthSizeBonus += 2;
-          this.detail = breadthSizeBonus;
+          this.tooltip = "Larger normal targets can appear\n\n* Larger targets are easier to collect and produce more drops";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `+${breadthSizeBonus} Max Target Width`;
+            this.title = `+${breadthSizeBonus} Max Target Size`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
 
-      // intermediate 
+      //#region intermediate upgrades
       {
         id: "double target spawn",
         title: "x2 Target Spawn Rate",
@@ -362,7 +396,7 @@
         price: 100,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: `Double normal target spawn chance`,
         onPurchase: function () {
           if (this.level == 1) {
             unlockItems(shopItems, "unlock explosive target")
@@ -370,15 +404,17 @@
 
           this.price *= 5;
           targetChance *= 2;
-          this.detail = `x${2 ** this.level}`;
+          this.tooltip = `Double normal target spawn chance`;
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${2 ** this.level} Target Spawn Rate`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
-
+      
       // explosive
       {
         id: "unlock explosive target",
@@ -389,13 +425,13 @@
         price: 200,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Explosive\" targets may appear\n\nSPECIAL: release shrapnel which collects surrounding targets",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           explosiveTargetUnlocked = true;
           
           spawnTarget(null, null, "explosive");
-          unlockItems(shopItems, "more explosive targets", "double explosive target drops", "unlock dark target", "max special drops", "double special target rate");
+          unlockItems(shopItems, "more explosive targets", "double explosive target drops", "unlock dark target", "max special targets", "double special target rate");
 
           shopItems.splice(shopItems.indexOf(this), 1);
         }
@@ -409,34 +445,44 @@
         price: 300,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Increase the spawn rate of explosive targets",
         onPurchase: function () {
           explosiveTargetChance *= 1.2;
           this.price = Math.round(this.price * 1.2);
 
+          this.tooltip = "Increase the spawn rate of explosive targets";
+
           if (this.level == this.maxLevel) {
             this.title = "More Explosive Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
         id: "double explosive target drops",
-        title: "x2 Explosive Target Drops",
+        title: "x2 Explosive Shrapnel",
         unlocked: false,
         level: 0,
         maxLevel: 2,
         price: 500,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double the amount of target-collecting shrapnel released from explosive targets",
         unlocked: false,
         onPurchase: function () {
           explosiveConfettiMult *= 2;
           this.price *= 5;
 
+          this.tooltip = "Double the amount of target-collecting shrapnel released from explosive targets";
+
           if (this.level == this.maxLevel) {
-            this.title = `x${2 ** this.maxLevel} Explosive Target Drops`;
+            this.title = `x${2 ** this.maxLevel} Explosive Shrapnel`;
             unlockItems(shopItems, "double explosive time");
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -447,10 +493,10 @@
         level: 0,
         maxLevel: 1,
         price: 100000,
-        seedPrice: 10000,
+        leafPrice: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double the duration for which explosive target shrapnel can collect targets",
         onPurchase: function () {
           explosiveLifetimeMult *= 2;
         }
@@ -466,12 +512,12 @@
         price: 500,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Dark\" targets may appear\n\nSPECIAL: produce drops which, then, produce normal targets\n\n* All special targets may appear at the same time; this will not reduce the chance for an explosive target",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           darkTargetUnlocked = true;
           spawnTarget(null, null, "dark");
-          unlockItems(shopItems, "more dark targets", "double dark target drops", "unlock gold target");
+          unlockItems(shopItems, "more dark targets", "double dark drops", "unlock gold target");
           shopItems.splice(shopItems.indexOf(this), 1);
         }
       },
@@ -484,35 +530,43 @@
         price: 400,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Increase the spawn rate of dark targets",
         onPurchase: function () {
           this.price = Math.round(this.price * 1.2);
           darkTargetChance *= 1.2;
 
+          this.tooltip = "Increase the spawn rate of dark targets";
+
           if (this.level == this.maxLevel) {
             this.title = "More Dark Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
-        id: "double dark target drops",
-        title: "2x Dark Target Drops",
+        id: "double dark drops",
+        title: "2x Dark Drops",
         unlocked: false,
         level: 0,
         maxLevel: 2,
         price: 1500,
         x: undefined,
         y: undefined,
-        detail: `x${darkTargetConfettiMult}`,
+        tooltip: "Double the number of target-spawning drops from dark targets",
         unlocked: false,
         onPurchase: function () {
           darkTargetConfettiMult *= 2;
           this.price *= 2;
-          this.detail = `x${darkTargetConfettiMult}`;
+
+          this.tooltip = "Double the number of target-spawning drops from dark targets";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `x${darkTargetConfettiMult} Dark Target Drops`;
+            this.title = `x${darkTargetConfettiMult} Dark Drops`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -527,7 +581,7 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Gold\" targets may appear\n\nSPECIAL: produce a trove of high-value drops",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           goldTargetUnlocked = true;
@@ -545,14 +599,18 @@
         price: 500,
         x: undefined,
         y: undefined,
-        detail: goldTargetDrop,
+        tooltip: "Increase the spawn rate of dark targets",
         onPurchase: function () {
           this.price = Math.round(this.price * 1.2);
           goldTargetChance *= 1.2;
 
+          this.tooltip = "Increase the spawn rate of dark targets";
+
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = "More Gold Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -565,15 +623,17 @@
         price: 5000,
         x: undefined,
         y: undefined,
-        detail: goldTargetDrop,
+        tooltip: "Double the number of high-value drops from gold targets",
         onPurchase: function () {
           goldTargetDrop *= 2;
           this.price *= 5;
-          this.detail = goldTargetDrop;
+          this.tooltip = "Double the number of high-value drops from gold targets";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${goldTargetDrop} Gold Target Drops`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -586,7 +646,7 @@
         price: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Gold targets only require a single touch to fully collect",
         onPurchase: function () {
           goldAutoCollect = true;
           world.areas["main"].autoTargets = [];
@@ -603,20 +663,23 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: `x${specialTargetRateMult}`,
+        tooltip: "Double the rate at which each special target can appear",
         onPurchase: function () {
           this.price *= 10;
           specialTargetRateMult *= 2;
-          this.detail = `x${specialTargetRateMult}`;
+
+          this.tooltip = "Double the rate at which each special target can appear";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${specialTargetRateMult} Special Target Rate`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
-        id: "max special drops",
+        id: "max special targets",
         title: "+1 Max Special Targets",
         unlocked: false,
         level: 0,
@@ -624,20 +687,24 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: maxSpecialTargets,
+        tooltip: "More special targets may be present at once",
         onPurchase: function () {
           this.price = Math.round(this.price * 1.2);
           maxSpecialTargets += 1;
-          this.detail = maxSpecialTargets;
+
+          this.tooltip = "More special targets may be present at once";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${maxSpecialTargets} Max Special Targets`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
 
-      // advanced
+      //#region advanced upgrades
       {
         id: "double points",
         title: "x2 Points",
@@ -645,19 +712,22 @@
         level: 0,
         maxLevel: 3,
         price: 300000,
-        seedPrice: 1000,
+        leafPrice: 1000,
         x: undefined,
         y: undefined,
-        detail: `x${pointsMult}`,
+        tooltip: "Double the value of drops",
         onPurchase: function () {
           this.price += 200000 * this.level;
-          this.seedPrice += 3000 * this.level;
+          this.leafPrice += 3000 * this.level;
           pointsMult *= 2;
-          if (this.level < this.maxLevel) {
-            this.detail = `x${pointsMult}`;
-          } else {
-            this.detail = null;
+
+          this.tooltip = "Double the value of drops";
+          
+          if (this.level == this.maxLevel) {
             this.title = `x${pointsMult} Points`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -668,10 +738,10 @@
         level: 0,
         maxLevel: 2,
         price: 100000,
-        seedPrice: 10000,
+        leafPrice: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "A permanant little buddy appears to collect targets in the main area",
         onPurchase: function () {
           settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
           
@@ -684,15 +754,21 @@
             lifespan: Infinity,
             color: "green",
             isCollector: true,
+            movementIsCrucial: true,
             size: 16,
             maxSpeed: turtleSpeed,
           });
 
+          this.tooltip = "A permanant little buddy appears to collect targets in the main area";
+          
           this.price *= 5;
-          this.seedPrice *= 3;
+          this.leafPrice *= 3;
 
           if (this.level == this.maxLevel) {
             this.title = `${this.maxLevel} Turtles`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -705,6 +781,7 @@
         price: 250,
         x: undefined,
         y: undefined,
+        tooltip: "Open doors into the garden\n\nUnlock currency: leaves",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           world.areas["garden"].unlocked = true;
@@ -712,10 +789,11 @@
           shopItems.splice(shopItems.indexOf(this), 1);
         }
       }
+      //#endregion
     ];
 
     let farmersMarketItems = [
-      // plot upgrades
+      //#region plot upgrades
       {
         id: "garden plot",
         title: "+1 Garden Plot",
@@ -723,10 +801,10 @@
         level: 0,
         maxLevel: maxGardenPlots,
         price: 0,
-        seedPrice: 0,
+        leafPrice: 0,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Garden plots provide space for 5 rows each (where the crops actually grow)",
         onPurchase: function () {
           gardenPlots.push({
             x: null, y: null,
@@ -736,14 +814,21 @@
           });
 
           this.price = Math.round(2500 * this.level ** 1.6);
-          this.seedPrice = 100 * this.level;
+          this.leafPrice = 100 * this.level;
           const farmersMarketItems = world.areas["farmers market"].items;
+
+          this.tooltip = "Garden plots provide space for 5 rows each (where the crops actually grow)";
 
           if (this.level == 1) unlockItems(farmersMarketItems, "garden row", "water plot", "enrich plot");
 
+          
           if (this.level == 5) unlockItems(farmersMarketItems, "sunlamp", "unlock rain");
-
-          if (this.level == this.maxLevel) this.title = `${gardenPlots.length} Garden Plots`;
+          if (this.level == this.maxLevel) {
+            this.title = `${gardenPlots.length} Garden Plots`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
+          }
 
           // update the water + enrich upgrades
           farmersMarketItems.find(item => item.id == "water plot").refresh();
@@ -760,16 +845,22 @@
         level: 0,
         maxLevel: 1,
         price: 0,
-        seedPrice: 0,
+        leafPrice: 0,
         x: undefined,
         y: undefined,
         detail: null,
+        tooltip: "Rows designate space to grow crops repeatedly",
         onPurchase: function () {
           this.price = Math.round(500 * this.level ** 1.5);
-          this.seedPrice = 20 * this.level;
-          this.detail = ++gardenStrips;
+          this.leafPrice = 20 * this.level;
+          this.tooltip = "Rows designate space to grow crops repeatedly";
 
-          gardenPlots[Math.floor((gardenStrips - 1) / 5)].strips.push([{
+          let gardenStripCount = 0;
+          for (let i = 0; i < gardenPlots.length; i++) {
+            gardenStripCount += gardenPlots[i].strips.length;
+          }
+
+          gardenPlots[Math.floor(gardenStripCount / 5)].strips.push([{
             x: null, y: null,
             growth: 0,
             confetti: 2 + Math.round(Math.random()),
@@ -795,12 +886,13 @@
             unlockItems(world.areas["farmers market"].items, "crop harvest", "rabbit");
           }
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `${gardenStrips} Garden Rows`;
+            this.title = `${gardenStripCount + 1} Garden Rows`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
-
       {
         id: "water plot",
         title: "Water 1 Plot",
@@ -808,10 +900,10 @@
         level: 0,
         maxLevel: 1,
         price: 1000,
-        seedPrice: 10,
+        leafPrice: 10,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Watered plots dry up over time, but increase crop growth",
         onPurchase: function () {
           this.purchasedBefore = true;
           for (let i = 0; i < gardenPlots.length; i++) {
@@ -827,13 +919,16 @@
           this.maxLevel = gardenPlots.length;
           this.level = gardenPlots.filter(plot => plot.wetness).length;
           this.price = 1000 + 2000 * this.level;
-          this.seedPrice = 10 + 10 * this.level;
+          this.leafPrice = 10 + 10 * this.level;
+
+          this.tooltip = "Watered plots dry up over time, but increase crop growth";
 
           if (this.level == this.maxLevel) {
             this.title = "All Plots Watered";
           } else {
             this.title = "Water 1 Plot";
-          }
+          }            
+          this.tooltip += `\n\n${this.level}/${this.maxLevel}`;
         },
       },
       {
@@ -843,10 +938,10 @@
         level: 0,
         maxLevel: 1,
         price: 3000,
-        seedPrice: 20,
+        leafPrice: 20,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Fertile plots increase crop growth for a number of harvests, but eventually run out",
         onPurchase: function () {
           this.purchasedBefore = true;
           for (let i = 0; i < gardenPlots.length; i++) {
@@ -862,17 +957,21 @@
           this.maxLevel = gardenPlots.length;
           this.level = gardenPlots.filter(plot => plot.fertility).length;
           this.price = 3000 + 3000 * this.level;
-          this.seedPrice = 20 + 10 * this.level;
+          this.leafPrice = 20 + 10 * this.level;
+
+          this.tooltip = "Fertile plots increase crop growth for a number of harvests, but eventually run out";
 
           if (this.level == this.maxLevel) {
             this.title = "All Plots Enriched";
           } else {
             this.title = "Enrich 1 Plot";
           }
+          this.tooltip += `\n\n${this.level}/${this.maxLevel}`;
         },
       },
+      //#endregion
 
-      // general upgrades
+      //#region general upgrades
       {
         id: "crop harvest",
         title: "+1 Crop Harvest",
@@ -880,19 +979,22 @@
         level: 0,
         maxLevel: 9,
         price: 1000,
-        seedPrice: 10,
+        leafPrice: 10,
         x: undefined,
         y: undefined,
-        detail: cropHarvestBonus,
+        tooltip: "Crops produce more drops",
         onPurchase: function () {
           cropHarvestBonus += 1;
           this.price = 1000 + 2000 * this.level;
-          this.seedPrice *= 2;
-          this.detail = cropHarvestBonus;
+          this.leafPrice *= 2;
+
+          this.tooltip = "Crops produce more drops";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `+${cropHarvestBonus} Crop Harvest`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -903,10 +1005,10 @@
         level: 0,
         maxLevel: 1,
         price: 200000,
-        seedPrice: 2500,
+        leafPrice: 2500,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double crop growth",
         onPurchase: function () {
           cropGrowthChance *= 2;
           this.title = "Sunlamp";
@@ -919,10 +1021,10 @@
         level: 0,
         maxLevel: 1,
         price: 200000,
-        seedPrice: 1000,
+        leafPrice: 1000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Rain\" targets may appear in the garden\n\nSPECIAL: begin the rain event which waters plots for a little while",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           rainUnlocked = true;
@@ -937,10 +1039,10 @@
         level: 0,
         maxLevel: 3,
         price: 500,
-        seedPrice: 30,
+        leafPrice: 30,
         x: undefined,
         y: undefined,
-        detail: cropHarvestBonus,
+        tooltip: "A permanant little buddy appears to collect targets and crops in the garden",
         onPurchase: function () {
           settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
 
@@ -954,17 +1056,24 @@
             color: "white",
             stroke: "gray",
             isCollector: true,
+            movementIsCrucial: true,
             size: 16,
             maxSpeed: rabbitSpeed,
           });
           this.price *= 20;
-          this.seedPrice *= 10;
+          this.leafPrice *= 10;
+
+          this.tooltip = "A permanant little buddy appears to collect targets and crops in the garden";
 
           if (this.level == this.maxLevel) {
             this.title = `${this.level} Rabbits`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
     ];
 
     
@@ -976,7 +1085,7 @@
         enabled: true,
         x: undefined,
         y: undefined,
-        detail: "enabled",
+        tooltip: "Determine whether or not the touch controller is displayed\n\n* Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\nENABLED",
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
@@ -993,7 +1102,7 @@
 
           // item update
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.detail = this.enabled ? "enabled" : "disabled";
+          this.tooltip = `Determine whether or not the touch controller is displayed\n\n* Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\n${this.enabled ? "ENABLED" : "DISABLED"}`;
         }
       },
       {
@@ -1003,16 +1112,16 @@
         level: 4,
         x: undefined,
         y: undefined,
-        detail: "auto",
-        color: "rgb(0, 40, 200)",
+        tooltip: "Determine the size of the touch controller\n\nPerformance impact: none\n\nAUTO",
+        color: "rgb(70, 70, 250)",
         onPurchase: function () {
           this.level = (this.level + 1) % 5;
 
           touchControllerSize = [()=>{return 200}, ()=>{return 400}, ()=>{return 600}, ()=>{return Math.min(window.innerWidth, window.innerHeight) / 3}, ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2}][this.level];
-          replaceTouchController(touchControllerSize());
+          updateTouchController(touchControllerSize());
 
-          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)", "rgb(0, 40, 200)"][this.level];
-          this.detail = ["small", "medium", "large", "auto small", "auto"][this.level];
+          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)", "rgb(70, 70, 250)"][this.level];
+          this.tooltip = `Determine the size of the touch controller\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE", "AUTO SMALL", "AUTO"][this.level]}`;
         }
       },
       {
@@ -1022,13 +1131,13 @@
         enabled: true,
         x: undefined,
         y: undefined,
-        detail: "shown",
+        tooltip: "Determine whether the game version shows in the corner\n\nPerformance impact: miniscule\n\nSHOWN",
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           showVersionCode = this.enabled;
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.detail = this.enabled ? "shown" : "hidden";
+          this.tooltip = `Determine whether the game version shows in the corner\n\nPerformance impact: miniscule\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
         }
       },
       {
@@ -1039,50 +1148,67 @@
         x: undefined,
         y: undefined,
         detail: "shown",
+        tooltip: "Determine whether game currencies are actively displayed on screen\n\nPerformance impact: miniscule\n\nSHOWN",
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           showCurrency = this.enabled;
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.detail = this.enabled ? "shown" : "hidden";
+          this.tooltip = `Determine whether game currencies are actively displayed on screen\n\nPerformance impact: miniscule\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
         }
       },
       {
-        id: "show particles",
+        id: "show drops",
         title: "Show Drops",
         unlocked: true,
         enabled: true,
         x: undefined,
         y: undefined,
-        detail: "shown",
+        tooltip: `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\nSHOWN`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
-          showParticles = this.enabled;
+          showDrops = this.enabled;
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.detail = this.enabled ? "shown" : "hidden";
+          this.tooltip = `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
           
           if (this.enabled) {
-            unlockItems(settingsItems, "particle time");
+            unlockItems(settingsItems, "drop time");
           } else {
-            lockItems(settingsItems, "particle time");
+            lockItems(settingsItems, "drop time");
           }
         }
       },
       {
-        id: "particle time",
+        id: "drop time",
         title: "Drop Collect Speed",
         unlocked: true,
         level: 1,
         x: undefined,
         y: undefined,
-        detail: "normal",
+        tooltip: `Determine how quickly most drops disappear\n\nPerformance impact: medium\n\nMEDIUM`,
         color: "orange",
         onPurchase: function () {
           this.level = (this.level + 1) % 4;
           normalParticleTime = [2, 1, .25, .1][this.level];
           this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
-          this.detail = ["slow", "medium", "fast", "really fast"][this.level];
+          this.tooltip = `Determine how quickly most drops disappear\n\nPerformance impact: medium\n\n${["SLOW", "MEDIUM", "FAST", "REALLY FAST"][this.level]}`;
+        }
+      },
+      {
+        id: "show particles",
+        title: "Show Particles",
+        unlocked: true,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\nSHOWN`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          showCosmeticParticles = this.enabled;
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
         }
       },
       {
@@ -1092,7 +1218,7 @@
         level: 3,
         x: undefined,
         y: undefined,
-        detail: "all",
+        tooltip: `Determine which targets to render\n\nPerformance impact: low-medium\n\nALL`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.level = (this.level + 1) % 4;
@@ -1101,7 +1227,7 @@
           showSpecialTargets = [false, false, true, true][this.level];
 
           this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
-          this.detail = ["none", "only basic targets", "only special targets", "all"][this.level];
+          this.tooltip = `Determine which targets to render\n\nPerformance impact: low-medium\n\n${["NONE", "ONLY NORMAL TARGETS", "ONLY SPECIAL TARGETS", "ALL"][this.level]}`;
         }
       },
       {
@@ -1111,13 +1237,13 @@
         enabled: false,
         x: undefined,
         y: undefined,
-        detail: "lax",
+        tooltip: `Determine if the normal target count is allowed to overflow (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           strictTargetAmountLimit = this.enabled;
           this.color = this.enabled ? "rgb(200, 0, 0)" : "rgb(0, 200, 0)";
-          this.detail = this.enabled ? "strict" : "lax";
+          this.tooltip = `Determine if the normal target count is allowed to overflow (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
         }
       },
       {
@@ -1127,7 +1253,7 @@
         level: 3,
         x: undefined,
         y: undefined,
-        detail: "labels and doorways",
+        tooltip: `Determine how doorways should be displayed\n\nPerformance impact: miniscule\n\nLABELS & DOORWAYS`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.level = (this.level + 1) % 4;
@@ -1147,7 +1273,7 @@
           }
 
           this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
-          this.detail = ["none", "doorways", "labels", "labels & doorways"][this.level];
+          this.tooltip = `Determine how doorways should be displayed\n\nPerformance impact: miniscule\n\n${["NONE", "DOORWAYS", "LABELS", "LABELS & DOORWAYS"][this.level]}`;
         }
       },
       {
@@ -1157,7 +1283,7 @@
         level: 1,
         x: undefined,
         y: undefined,
-        detail: "medium",
+        tooltip: `Change the physical size of doors\n\nPerformance impact: none\n\nMEDIUM`,
         color: "gold",
         onPurchase: function () {
           this.level = (this.level + 1) % 3;
@@ -1165,7 +1291,7 @@
           doorSize = [40, 70, 100][this.level];
 
           this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
-          this.detail = ["small", "medium", "large"][this.level];
+          this.tooltip = `Change the physical size of doors\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE"][this.level]}`;
         }
       },
       {
@@ -1175,13 +1301,13 @@
         enabled: true,
         x: undefined,
         y: undefined,
-        detail: "shown",
+        tooltip: `Determine whether cosmetic rain particles appear in the garden during rain events\n\nPerformance impact: low\n\nSHOWN`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           showRain = this.enabled;
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.detail = this.enabled ? "shown" : "hidden";
+          this.tooltip = `Determine whether cosmetic rain particles appear in the garden during rain events\n\nPerformance impact: low\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
         }
       },
       {
@@ -1190,6 +1316,7 @@
         unlocked: false,
         x: undefined,
         y: undefined,
+        tooltip: `Instantly scramble the positions of all rabbits and turtles\n\n* Useful if they have poor positioning`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           for (let i = 0; i < Object.keys(world.areas).length; i++) {
@@ -1199,7 +1326,7 @@
             for (let j = 0; j < area.particles.length; j++) {
               const particle = area.particles[j];
 
-              if (particle.lifespan !== Infinity || !particle.isCollector) continue;
+              if (isFinite(particle.lifespan) || !particle.isCollector) continue;
               
               particle.xVelocity = particle.maxSpeed * randomSign();
               particle.yVelocity = particle.maxSpeed * randomSign();
@@ -1239,16 +1366,23 @@
           if (rectsDoCollide(collider, target)) collectTarget(target);
         }
       }
+
+      let didCollideItem = false;
       if (area.items) {
         shopFocus = undefined;
+        
         for (let i = 0; i < area.items.length; i++) {
           const item = area.items[i];
-          if (purchaseIsValid(item) && rectsDoCollide(collider, { ...item, size: itemButtonSize })) {
-            shopFocus = item;
+          
+          if (rectsDoCollide(collider, { ...item, size: itemButtonSize })) {
+            didCollideItem = true;
+            showTooltip(item);            
+            if (purchaseIsValid(item)) shopFocus = item;
             break;
           }
         }
       }
+      if (!didCollideItem) hideTooltip();
 
       // garden collisions (crop targets are organized differently data-wise)
       if (area == world.areas["garden"]) {
@@ -1297,7 +1431,8 @@
 
       setupKeyboardControls();
 
-      if (userHasTouchScreen) setupTouchControls();
+      initializeTouchController();
+      if (userHasTouchScreen) updateTouchController();
     }
 
     const setupKeyboardControls = () => {
@@ -1366,25 +1501,45 @@
       });
     }
 
-    const setupTouchControls = () => {
-      const touchController = document.getElementById("touch-controller");
-      // display
-      replaceTouchController(touchControllerSize());
-      
+    const updateTouchController = (controllerSize = touchControllerSize()) => {
+      if (!useTouchController) return;
+      userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+      const controller = document.getElementById("touch-controller");
+
+      if (!userHasTouchScreen) {
+        controller.style.display = "none";
+        return;
+      }
+
+      // resize
+      const fontSize = controllerSize / 12;
+      controller.style.display = userHasTouchScreen ? "grid" : "none";
+      controller.style.gap = controllerSize / 50 + "px";
+      controller.style.height = controllerSize + "px";
+      controller.style.width = controllerSize + "px";
+      controller.style.fontSize = fontSize + "px";
+
+      // reposition
+      controller.style.left = canvas.getBoundingClientRect().left + "px";
+      controller.style.top = canvas.getBoundingClientRect().top + "px";
+    }
+
+    const initializeTouchController = () => {
       // functionality
+      const touchController = document.getElementById("touch-controller");
       const adjustmentControl = document.getElementById("adjust-controller");
+      const halfController = touchControllerSize() / 2;
+
       adjustmentControl.addEventListener("touchmove", e => {
         const touch = e.changedTouches[0]
-        const halfController = touchControllerSize() / 2;
         touchController.style.left = `${touch.clientX - halfController}px`;
         touchController.style.top = `${touch.clientY - halfController}px`;
       });
       ["touchend", "touchcancel"].forEach(event => {
         adjustmentControl.addEventListener(event, e => {
           const rect = touchController.getBoundingClientRect();
-          const halfController = touchControllerSize() / 2;
           if (rect.left < -halfController || rect.right > window.innerWidth + halfController || rect.top < -halfController || rect.bottom > window.innerHeight + halfController) {
-            replaceTouchController();
+            updateTouchController();
           }
         });
       });
@@ -1399,24 +1554,7 @@
       canvas.addEventListener("touchstart", e => controller.interact = true);
       canvas.addEventListener("touchend", e => controller.interact = false);
       canvas.addEventListener("touchcancel", e => controller.interact = false);
-    }
 
-    const replaceTouchController = (controllerSize = touchControllerSize()) => {
-      if (!useTouchController) return;
-
-      const controller = document.getElementById("touch-controller");
-
-      // resize
-      const fontSize = controllerSize / 12;
-      controller.style.display = "grid";
-      controller.style.gap = controllerSize / 50 + "px";
-      controller.style.height = controllerSize + "px";
-      controller.style.width = controllerSize + "px";
-      controller.style.fontSize = fontSize + "px";
-
-      // reposition
-      controller.style.left = canvas.getBoundingClientRect().left + "px";
-      controller.style.top = canvas.getBoundingClientRect().top + "px";
     }
 
     const drawPlayer = () => {
@@ -1528,7 +1666,17 @@
         for (let j = 0; j < area.particles.length; j++) {
           const particle = area.particles[j];
 
-          if (scene != areaNames[i] && particle.isCosmetic) continue;
+          if (particle.type && particle.type == "rain") {
+            if (!showRain || scene != areaNames[i]) continue;
+          } else if (particle.isCosmetic) {
+            if (!showCosmeticParticles || scene != areaNames[i]) continue;
+          } else {
+            if (!showDrops && isFinite(particle.lifespan) && !particle.movementIsCrucial)  {
+              if (particle.onDeath) particle.onDeath();
+              area.particles.splice(j, 1);
+              continue;
+            }
+          }
           
           // keep the particle on screen
           if (!particle.ignoreWalls) {
@@ -1558,7 +1706,6 @@
             if (particle.onDeath) particle.onDeath();
             area.particles.splice(j, 1);
           }
-
         }
       }
     }
@@ -1568,7 +1715,14 @@
       
       for (let i = 0; i < area.particles.length; i++) {
         const particle = area.particles[i];
-        if (!showParticles && particle.lifespawn !== Infinity) continue;
+        
+        if (particle.type && particle.type == "rain") {
+          if (!showRain) continue;
+        } else if (particle.isCosmetic) {
+          if (!showCosmeticParticles) continue;
+        } else {
+          if (!showDrops && isFinite(particle.lifespan)) continue;
+        }
         
         if (ctx.fillStyle != particle.color) ctx.fillStyle = particle.color;
         ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
@@ -1591,7 +1745,7 @@
         const superPotent = Math.random() < superPotentChance;
         const potency = superPotent ? superPotentValue : Math.random() * maxNormalPotency;
         const breadth = Math.random();
-        const confetti = Math.trunc(potency * potencyBonus / 2 + breadth * breadthBonus / 2);
+        const confetti = Math.trunc(potency * potencyBonus / 2 + breadth * breadthBonus);
 
         if (strictTargetAmountLimit && main.targets.length >= maxTargets) {
           points += (confetti + particleBase) * pointsMult;
@@ -1651,6 +1805,7 @@
                 friction: 1,
                 lifespan: Math.trunc((2 + Math.random()) / 2 * FPS),
                 color: this.color,
+                movementIsCrucial: true,
                 onDeath: function () { spawnTarget(this.x, this.y) },
               });
             }
@@ -1681,6 +1836,7 @@
                 lifespan: Math.trunc((.4 + Math.random() * .4) * FPS * explosiveLifetimeMult),
                 color: "orange",
                 isCollector: true,
+                movementIsCrucial: true,
                 onDeath: () => { points += pointsMult },
               });
             }
@@ -1814,6 +1970,7 @@
         }
       }
     }
+    //#endregion
 
     //#region utility functions
     const randomTargetColor = strength => {
@@ -1829,6 +1986,17 @@
     }
     //#endregion
 
+    const showTooltip = item => {
+      const tooltip = document.getElementById("tooltip");
+
+      tooltip.innerText = item.tooltip;
+      tooltip.style.opacity = 1
+    }
+    const hideTooltip = () => {
+      const tooltip = document.getElementById("tooltip");
+      tooltip.style.opacity = 0;
+    }
+    
     const drawText = () => {
       // general styles
       ctx.fillStyle = "black";
@@ -1847,8 +2015,8 @@
           ctx.textAlign = "center";
           if (world.areas["garden"].unlocked) {
             startHeight -= 20
-            ctx.strokeText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
-            ctx.fillText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
+            ctx.strokeText(`Leaves: ${leaves}`, canvas.width / 2, startHeight + 20);
+            ctx.fillText(`Leaves: ${leaves}`, canvas.width / 2, startHeight + 20);
           }
   
           ctx.strokeText(`Points: ${points}`, canvas.width / 2, startHeight);
@@ -1936,7 +2104,7 @@
       }
     }
 
-    const randomEvents = () => {      
+    const randomEvents = () => {
       const main = world.areas["main"];
       
       // main targets
@@ -1960,7 +2128,7 @@
           lifespan: (Math.random() * (canvas.height * 1.25 / rainSpeed / 60)) * FPS,
           color: "#6495ED84",
           ignoreWalls: true,
-          isCosmetic: true,
+          type: "rain",
         });
       }
 
@@ -2022,7 +2190,7 @@
           friction: 1,
           lifespan: Math.trunc((1 + Math.random() * .5) * FPS),
           color: `hsl(120, 80%, 40%)`,
-          onDeath: () => seeds += 1,
+          onDeath: () => leaves += 1,
         });
       }
 
@@ -2117,7 +2285,7 @@
 
     //#region shop
     const purchaseIsValid = shopItem => {
-      return (shopItem.price ? shopItem.price <= points : true) && (shopItem.seedPrice ? shopItem.seedPrice <= seeds : true) && (shopItem.maxLevel ? shopItem.level < shopItem.maxLevel : true);
+      return (shopItem.price ? shopItem.price <= points : true) && (shopItem.leafPrice ? shopItem.leafPrice <= leaves : true) && (shopItem.maxLevel ? shopItem.level < shopItem.maxLevel : true);
     }
 
     const detectPurchase = () => {
@@ -2129,10 +2297,10 @@
       } else {
         shopFocus.level += 1;
         points -= shopFocus.price;
-        if (shopFocus.seedPrice) seeds -= shopFocus.seedPrice;
+        if (shopFocus.leafPrice) leaves -= shopFocus.leafPrice;
         shopFocus.onPurchase();
 
-        if (showParticles) {
+        if (showCosmeticParticles) {
           const drops = shopFocus.level == shopFocus.maxLevel ? Math.min(25 * shopFocus.level, 150) : Math.min(7 * shopFocus.level, 100);
           const maxVelo = drops / 8 + 10;
           for (let i = 0; i < drops; i++) {
@@ -2144,6 +2312,7 @@
               friction: 1,
               lifespan: Math.trunc((.25 + Math.random() * .25) * FPS),
               color: shopFocus.level == shopFocus.maxLevel ? "hsl(47, 100%, 50%)" : "rgb(0, 200, 0)",
+              isCosmetic: true,
             });
           }
         }
@@ -2193,7 +2362,7 @@
           ctx.fillStyle = item.color;
         } else if (item.level === item.maxLevel) {
           ctx.fillStyle = "hsl(47, 100%, 50%)";
-        } else if (item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true)) {
+        } else if (item.price <= points && (item.leafPrice ? item.leafPrice <= leaves : true)) {
           ctx.fillStyle = "rgb(0, 200, 0)";
         } else {
           ctx.fillStyle = "rgb(200, 0, 0)";
@@ -2216,7 +2385,7 @@
         ctx.font = "20px serif";
         ctx.fillStyle = "black";
         ctx.textAlign = "center";
-        const titleText = item.detail ? `${item.title} : ${item.detail}` : item.title;
+        const titleText = item.title;
         ctx.fillText(titleText, item.x, item.y + itemButtonSize);
 
         if (!(item.level < item.maxLevel)) continue;
@@ -2224,9 +2393,8 @@
         // draw pricing
         const tempStrings = [];
         if (item.price) tempStrings.push(`${item.price} points`);
-        if (item.seedPrice) tempStrings.push(`${item.seedPrice} seeds`);
-        if (item.maxLevel && item.maxLevel > 1) tempStrings.push(`${item.level}/${item.maxLevel}`);
-        ctx.fillText(tempStrings.join(" : "), item.x, item.y + itemButtonSize + 20);
+        if (item.leafPrice) tempStrings.push(`${item.leafPrice} leaves`);
+        ctx.fillText(tempStrings.join(", "), item.x, item.y + itemButtonSize + 20);
       }
     }
     //#endregion
@@ -2263,17 +2431,21 @@
         canvas.style.transformOrigin = "top";
         canvas.style.transform = `scale(${scale.x})`;
       }
+
+      const tooltip = document.getElementById("tooltip");
+      
+      tooltip.style.maxWidth = canvas.getBoundingClientRect().width * .75;
+      tooltip.style.left = canvas.getBoundingClientRect().width * .75;
     }
     addEventListener("resize", ()=>{
       scaleCanvas();
-      if (userHasTouchScreen) replaceTouchController(touchControllerSize());
+      updateTouchController(touchControllerSize());
     });
     //#endregion
     
     scaleCanvas();
     setupPlayerControls();
     gameLoop();
-          
     //#region warn against using portrait screen orientation
     if (!screen.orientation.type.includes("landscape")) alert("This game is probably better in landscape orientation.");
     screen.orientation.addEventListener("change", item => {
