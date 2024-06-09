@@ -6,8 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvas</title>
   <style>
-    html {
+    html, body {
       height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
       background-color: linen;
       touch-action: none;
       user-select: none;
@@ -15,14 +20,14 @@
     }
 
     body {
-      margin: 0;
-      align-items: center;
+      justify-items: center;
       justify-content: center;
       display: grid;
       overflow: hidden;
     }
     
     canvas {
+      top: 0;
       background-color: #ffffff;
     }
 
@@ -38,18 +43,20 @@
       color: white;
       text-align: center;
       transition-duration: 105ms;
-      transition-delay: 200ms;
       font-family: Arial, Helvetica, sans-serif;
       font-weight: 600;
       text-shadow: 0 0 8px black;
+      pointer-events: none;
     }
     
-    #touch-controller {
+    #touch-arrow-controller {
       display: none;
       position: absolute;
       grid-template: repeat(3, 1fr) / repeat(3, 1fr);
       user-select: none;
+      pointer-events: none;
       z-index: 2;
+      line-height: 0;
 
       & > * {
         background-color: #00000029;
@@ -57,6 +64,7 @@
         justify-content: center;
         align-items: center;
         font-size: 3em;
+        pointer-events: initial;
 
         &:active {
           background-color: transparent;
@@ -84,17 +92,48 @@
       }
     }
 
+    #joystick-area {
+      position: absolute;
+      z-index: 2;
+      height: 100%;
+      width: 40%;
+      
+      & #joystick-socket {
+        display: none;
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        border: 1px solid #00000029;
+        border-radius: 50%;
+        align-items: center;
+        justify-items: center;
+        transform: translate(-50%, -50%);
+  
+        & #joystick-thumb {
+          background-color: #00000029;
+          width: 90%;
+          height: 90%;
+          border-radius: 50%;
+        }
+      }
+    }
+
   </style>
 </head>
 
 <body>
   <div id="main">
-    <div id="touch-controller">
+    <div id="touch-arrow-controller">
       <div id="up">&blacktriangle;</div>
       <div id="left">&blacktriangleleft;</div>
       <div id="adjust-controller">&there4;</div>
       <div id="right">&blacktriangleright;</div>
       <div id="down">&blacktriangledown;</div>
+    </div>
+    <div id="joystick-area">
+      <div id="joystick-socket">
+        <div id="joystick-thumb"></div>
+      </div>
     </div>
     <div id="tooltip"></div>
     <canvas id="canvas" width="1600" height="900"></canvas>
@@ -110,19 +149,49 @@
       right: false,
       down: false,
       interact: false,
+      joystick: null,
     }
-    const version = "v0.4.2";
+    const version = "v0.4.3";
     let userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
 
+    class Point {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+    }
+    class Vector {
+      constructor(mag, dir) {
+        this.magnitude = mag;
+        this.direction = dir;
+      }
+
+      static fromPoints(p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const magnitude = Math.sqrt(dx * dx + dy * dy);
+        const direction = Math.atan2(dy, dx);
+        return new Vector(magnitude, direction);
+      }
+
+      toPoint() {
+        return new Point(
+          this.magnitude * Math.cos(this.direction),
+          this.magnitude * Math.sin(this.direction)
+        );
+      }
+    }
+
+    const playerStart = new Point(canvas.width / 2, canvas.height / 2);
     const player = {
-      x: canvas.width / 2,
-      y: canvas.height / 2,
+      x: playerStart.x,
+      y: playerStart.y,
       size: 10,
-      xVelocity: 0,
-      yVelocity: 0,
-      acceleration: 2,
-      friction: 2,
-      maxVelocity: 14,
+      movement: Vector.fromPoints(playerStart, playerStart),
+      targetSpeed: null,
+      maxSpeed: 8,
+      acceleration: 1.3,
+      friction: 1,
       color: "rgb(255, 0, 0, 1)",
     }
 
@@ -145,6 +214,7 @@
     }
 
     let scene = "main";
+    let gameSpeed = .6;
 
     // settings
     let doorSize = 70;
@@ -154,12 +224,14 @@
     let showCurrency = true;
     let showNormalTargets = true;
     let showSpecialTargets = true;
-    let showCosmeticParticles = true;
-    let showDrops = true;
+    let showCosmeticParticles = 2;
+    let showDrops = 2;
     let strictTargetAmountLimit = false;
     let useTouchController = true;
+    let useTouchJoystick = true;
     let touchControllerSize = ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2};
 
+    let joystickStart = null;
     const doorColor = "#00000043";
 
     let shopFocus;
@@ -167,9 +239,9 @@
     const itemButtonSize = 50;
     const minimumLabelWidth = 200;
 
-    let points = 100000000;
+    let points = 0;
     let pointsMult = 1; // base multiplier appllied when gaining points
-    let leaves = 100000000;
+    let leaves = 0;
     let particleBase = 1; // points from targets
     const particleSize = 8; // visible size of most particles
 
@@ -185,23 +257,23 @@
 
     let maxTargets = 10; // (prevents lag and balances gameplay)
     let safeMaxTargets = 200; // (prevents lag and balances gameplay)
-    let targetChance = .01; // chance for a new target to appear each frame (1=100%)
+    let targetChance = .0025; // chance for a new target to appear each frame (1=100%)
     let maxSpecialTargets = 1; // (balances gameplay)
     let specialTargetCount = 0; // amount of special targets currently in play
     let specialTargetRateMult = 1; // increases the rate of all special target appearances
     //
     let darkTargetUnlocked = false; // dark target can spawn
-    let darkTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
+    let darkTargetChance = .0002; // chance for a new dark target to appear each frame (1=100%)
     let darkTargetConfettiMult = 1; // amount of particles from dark targets
     //
     let explosiveTargetUnlocked = false; // explosive target can spawn
-    let explosiveTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
+    let explosiveTargetChance = .0002; // chance for a new dark target to appear each frame (1=100%)
     let explosiveLifetimeMult = 1; // increase the amount of time that the explosive particles last for
     let minExplosiveConfetti = 30; // minimum amount of particles that spawn from an explosive target
     let explosiveConfettiMult = 1; // increase the amount of particles that spawn from an explosive target
     //
     let goldTargetUnlocked = false; // gold target can spawn
-    let goldTargetChance = .0005; // chance for a new gold target to appear each frame (1=100%)
+    let goldTargetChance = .0002; // chance for a new gold target to appear each frame (1=100%)
     let goldTargetDecay = 1; // size reduction per frame of the gold target
     let goldTargetSize = 45; // size reduction per frame of the gold target
     const goldTargetMinSize = 25; // minimum size before a gold target disappears
@@ -209,7 +281,7 @@
     let goldAutoCollect = false; // gold targets auto collect after being collected once
 
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
-    let cropGrowthChance = .0005; // chance for garden crops to increase in their 'growth' value by some amount
+    let cropGrowthChance = .0003; // chance for garden crops to increase in their 'growth' value by some amount
     const maxCropSize = 28; // maximum physical size for crop display and collision
     let cropHarvestBonus = 0; // multiplies the amount of leaves harvested from garden crops
     let gardenStripCount = 0; // sum count of garden strips across all plots
@@ -399,7 +471,7 @@
         tooltip: `Double normal target spawn chance`,
         onPurchase: function () {
           if (this.level == 1) {
-            unlockItems(shopItems, "unlock explosive target")
+            unlockItems(shopItems, "unlock dark target")
           }
 
           this.price *= 5;
@@ -415,6 +487,75 @@
         }
       },
       
+      // dark
+      {
+        id: "unlock dark target",
+        title: "Unlock Dark Target",
+        unlocked: false,
+        level: 0,
+        maxLevel: 1,
+        price: 200,
+        x: undefined,
+        y: undefined,
+        tooltip: "\"Dark\" targets may appear\n\nSPECIAL: produce drops which, then, produce normal targets\n\n* All special targets may appear at the same time; this will not reduce the chance for an explosive target",
+        stroke: "hsl(47, 100%, 50%)",
+        onPurchase: function () {
+          darkTargetUnlocked = true;
+          spawnTarget(null, null, "dark");
+          unlockItems(shopItems, "more dark targets", "double dark drops", "unlock explosive target", "max special targets");
+          shopItems.splice(shopItems.indexOf(this), 1);
+        }
+      },
+      {
+        id: "more dark targets",
+        title: "20% More Dark Targets",
+        unlocked: false,
+        level: 0,
+        maxLevel: 10,
+        price: 200,
+        x: undefined,
+        y: undefined,
+        tooltip: "Increase the spawn rate of dark targets",
+        onPurchase: function () {
+          this.price = Math.round(this.price * 1.2);
+          darkTargetChance *= 1.2;
+
+          this.tooltip = "Increase the spawn rate of dark targets";
+
+          if (this.level == this.maxLevel) {
+            this.title = "More Dark Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
+          }
+        }
+      },
+      {
+        id: "double dark drops",
+        title: "2x Dark Drops",
+        unlocked: false,
+        level: 0,
+        maxLevel: 2,
+        price: 1000,
+        x: undefined,
+        y: undefined,
+        tooltip: "Double the number of target-spawning drops from dark targets",
+        unlocked: false,
+        onPurchase: function () {
+          darkTargetConfettiMult *= 2;
+          this.price *= 3;
+
+          this.tooltip = "Double the number of target-spawning drops from dark targets";
+
+          if (this.level == this.maxLevel) {
+            this.title = `x${darkTargetConfettiMult} Dark Drops`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
+          }
+        }
+      },
+
       // explosive
       {
         id: "unlock explosive target",
@@ -422,7 +563,7 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 200,
+        price: 500,
         x: undefined,
         y: undefined,
         tooltip: "\"Explosive\" targets may appear\n\nSPECIAL: release shrapnel which collects surrounding targets",
@@ -431,7 +572,7 @@
           explosiveTargetUnlocked = true;
           
           spawnTarget(null, null, "explosive");
-          unlockItems(shopItems, "more explosive targets", "double explosive target drops", "unlock dark target", "max special targets", "double special target rate");
+          unlockItems(shopItems, "more explosive targets", "double explosive target drops", "unlock gold target", "double special target rate");
 
           shopItems.splice(shopItems.indexOf(this), 1);
         }
@@ -442,7 +583,7 @@
         unlocked: false,
         level: 0,
         maxLevel: 10,
-        price: 300,
+        price: 400,
         x: undefined,
         y: undefined,
         tooltip: "Increase the spawn rate of explosive targets",
@@ -466,7 +607,7 @@
         unlocked: false,
         level: 0,
         maxLevel: 2,
-        price: 500,
+        price: 1200,
         x: undefined,
         y: undefined,
         tooltip: "Double the amount of target-collecting shrapnel released from explosive targets",
@@ -499,75 +640,6 @@
         tooltip: "Double the duration for which explosive target shrapnel can collect targets",
         onPurchase: function () {
           explosiveLifetimeMult *= 2;
-        }
-      },
-
-      // dark
-      {
-        id: "unlock dark target",
-        title: "Unlock Dark Target",
-        unlocked: false,
-        level: 0,
-        maxLevel: 1,
-        price: 500,
-        x: undefined,
-        y: undefined,
-        tooltip: "\"Dark\" targets may appear\n\nSPECIAL: produce drops which, then, produce normal targets\n\n* All special targets may appear at the same time; this will not reduce the chance for an explosive target",
-        stroke: "hsl(47, 100%, 50%)",
-        onPurchase: function () {
-          darkTargetUnlocked = true;
-          spawnTarget(null, null, "dark");
-          unlockItems(shopItems, "more dark targets", "double dark drops", "unlock gold target");
-          shopItems.splice(shopItems.indexOf(this), 1);
-        }
-      },
-      {
-        id: "more dark targets",
-        title: "20% More Dark Targets",
-        unlocked: false,
-        level: 0,
-        maxLevel: 10,
-        price: 400,
-        x: undefined,
-        y: undefined,
-        tooltip: "Increase the spawn rate of dark targets",
-        onPurchase: function () {
-          this.price = Math.round(this.price * 1.2);
-          darkTargetChance *= 1.2;
-
-          this.tooltip = "Increase the spawn rate of dark targets";
-
-          if (this.level == this.maxLevel) {
-            this.title = "More Dark Targets";
-            this.tooltip += `\n\nLevel: ${this.level}`;
-          } else {
-            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
-          }
-        }
-      },
-      {
-        id: "double dark drops",
-        title: "2x Dark Drops",
-        unlocked: false,
-        level: 0,
-        maxLevel: 2,
-        price: 1500,
-        x: undefined,
-        y: undefined,
-        tooltip: "Double the number of target-spawning drops from dark targets",
-        unlocked: false,
-        onPurchase: function () {
-          darkTargetConfettiMult *= 2;
-          this.price *= 2;
-
-          this.tooltip = "Double the number of target-spawning drops from dark targets";
-
-          if (this.level == this.maxLevel) {
-            this.title = `x${darkTargetConfettiMult} Dark Drops`;
-            this.tooltip += `\n\nLevel: ${this.level}`;
-          } else {
-            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
-          }
         }
       },
 
@@ -752,6 +824,7 @@
             yVelocity: turtleSpeed * randomSign(),
             friction: 0,
             lifespan: Infinity,
+            wallBounce: true,
             color: "green",
             isCollector: true,
             movementIsCrucial: true,
@@ -1053,6 +1126,7 @@
             yVelocity: rabbitSpeed * randomSign(),
             friction: 0,
             lifespan: Infinity,
+            wallBounce: true,
             color: "white",
             stroke: "gray",
             isCollector: true,
@@ -1091,13 +1165,17 @@
           this.enabled = !this.enabled;
 
           if (this.enabled) {
-            unlockItems(settingsItems, "controller size");
+            unlockItems(settingsItems, "controller size", "use joystick");
           } else {
-            lockItems(settingsItems, "controller size");
+            lockItems(settingsItems, "controller size", "use joystick");
           }
 
           // external impact
-          document.getElementById("touch-controller").style.display = this.enabled ? "grid" : "none";
+          if (settingsItems.find(e=>e.id == "use joystick").enabled) {
+            document.getElementById("joystick-area").style.display = this.enabled ? "block" : "none";
+          } else {
+            document.getElementById("touch-arrow-controller").style.display = this.enabled ? "grid" : "none";
+          }
           useTouchController = this.enabled;
 
           // item update
@@ -1109,19 +1187,101 @@
         id: "controller size",
         title: "Controller Size",
         unlocked: userHasTouchScreen,
-        level: 4,
+        level: 1,
         x: undefined,
         y: undefined,
-        tooltip: "Determine the size of the touch controller\n\nPerformance impact: none\n\nAUTO",
-        color: "rgb(70, 70, 250)",
+        tooltip: "Determine the size of the touch controller\n\nPerformance impact: none\n\nMEDIUM",
+        color: "gold",
         onPurchase: function () {
-          this.level = (this.level + 1) % 5;
+          this.level = (this.level + 1) % 3;
 
-          touchControllerSize = [()=>{return 200}, ()=>{return 400}, ()=>{return 600}, ()=>{return Math.min(window.innerWidth, window.innerHeight) / 3}, ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2}][this.level];
-          updateTouchController(touchControllerSize());
+          touchControllerSize = [
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 3}, 
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2}, 
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 1.3}
+          ][this.level];
 
-          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)", "rgb(70, 70, 250)"][this.level];
-          this.tooltip = `Determine the size of the touch controller\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE", "AUTO SMALL", "AUTO"][this.level]}`;
+          updateTouchControllers(touchControllerSize());
+
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine the size of the touch controller\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE"][this.level]}`;
+        }
+      },
+      {
+        id: "use joystick",
+        title: "Use Joystick",
+        unlocked: userHasTouchScreen,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether the touch controller uses joystick or arrow inputs\n\nPerformance impact: none\n\nJOYSTICK",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+
+          useTouchJoystick = this.enabled;
+          const joystick = document.getElementById("joystick-area");
+          if (useTouchJoystick) {
+            unlockItems(settingsItems, "joystick area");
+            lockItems(settingsItems, "lock controller");
+            joystick.style.display = "block";
+          } else {
+            lockItems(settingsItems, "joystick area");
+            unlockItems(settingsItems, "lock controller");
+            joystick.style.display = "none";
+          }
+          updateTouchControllers(touchControllerSize());
+
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether the touch controller uses joystick or arrow inputs\n\nPerformance impact: none\n\n${this.enabled ? "JOYSTICK" : "ARROWS"}`;
+        }
+      },
+      {
+        id: "joystick area",
+        title: "Joystick Area",
+        unlocked: userHasTouchScreen,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine which side of the screen the joystick control is used on\n\nPerformance impact: none\n\nLEFT",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+
+          const joystick = document.getElementById("joystick-area");
+          if (this.enabled) {
+            joystick.style.left = "0px";
+            joystick.style.right = null;
+          } else {
+            joystick.style.left = null;
+            joystick.style.right = "0px";
+          }
+
+          // display effect
+          const duration = 900;
+          joystick.style.transitionDuration = "0ms";
+          joystick.style.backgroundColor = "rgba(0, 0, 0, 0.54)";
+          setTimeout(()=>joystick.style.transitionDuration = `${duration}ms`, 0);
+          setTimeout(()=>joystick.style.backgroundColor = "rgba(0, 0, 0, 0)", 0); 
+
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine which side of the screen the joystick control is used on\n\nPerformance impact: none\n\n${this.enabled ? "LEFT" : "RIGHT"}`;
+        }
+      },
+      {
+        id: "lock controller",
+        title: "Lock Controller",
+        unlocked: false,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether the arrow controller can be moved\n\nPerformance impact: none\n\nUNLOCKED",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          document.getElementById("adjust-controller").style.display = this.enabled ? "grid" : "none";
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether the arrow controller can be moved\n\nPerformance impact: none\n\n${this.enabled ? "UNLOCKED" : "LOCKED"}`;
         }
       },
       {
@@ -1161,18 +1321,19 @@
         id: "show drops",
         title: "Show Drops",
         unlocked: true,
-        enabled: true,
+        level: 2,
         x: undefined,
         y: undefined,
         tooltip: `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\nSHOWN`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
-          this.enabled = !this.enabled;
-          showDrops = this.enabled;
-          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.tooltip = `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
-          
-          if (this.enabled) {
+          this.level = (this.level + 1) % 3;
+
+          showDrops = this.level;
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\n${["NONE", "SOME", "ALL"][this.level]}`;
+
+          if (showDrops) {
             unlockItems(settingsItems, "drop time");
           } else {
             lockItems(settingsItems, "drop time");
@@ -1199,16 +1360,17 @@
         id: "show particles",
         title: "Show Particles",
         unlocked: true,
-        enabled: true,
+        level: 2,
         x: undefined,
         y: undefined,
-        tooltip: `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\nSHOWN`,
+        tooltip: `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\nALL`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
-          this.enabled = !this.enabled;
-          showCosmeticParticles = this.enabled;
-          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.tooltip = `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
+          this.level = (this.level + 1) % 3;
+
+          showCosmeticParticles = this.level;
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\n${["NONE", "SOME", "ALL"][this.level]}`;
         }
       },
       {
@@ -1237,13 +1399,13 @@
         enabled: false,
         x: undefined,
         y: undefined,
-        tooltip: `Determine if the normal target count is allowed to overflow (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
+        tooltip: `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           strictTargetAmountLimit = this.enabled;
           this.color = this.enabled ? "rgb(200, 0, 0)" : "rgb(0, 200, 0)";
-          this.tooltip = `Determine if the normal target count is allowed to overflow (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
+          this.tooltip = `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
         }
       },
       {
@@ -1318,7 +1480,10 @@
         y: undefined,
         tooltip: `Instantly scramble the positions of all rabbits and turtles\n\n* Useful if they have poor positioning`,
         color: "rgb(0, 200, 0)",
+        debounce: false,
         onPurchase: function () {
+          if (this.debounce) return;
+
           for (let i = 0; i < Object.keys(world.areas).length; i++) {
             const area = world.areas[Object.keys(world.areas)[i]];
             
@@ -1335,6 +1500,13 @@
               particle.y = Math.trunc(Math.random() * canvas.height);
             } 
           }
+
+          this.debounce = true;
+          this.color = "rgb(200, 0, 0)";
+          setTimeout(() => {
+            this.debounce = false;
+            this.color = "rgb(0, 200, 0)";
+          }, 300);
         }
       },
     ];
@@ -1431,131 +1603,181 @@
 
       setupKeyboardControls();
 
-      initializeTouchController();
-      if (userHasTouchScreen) updateTouchController();
+      addTouchListeners();
+      updateTouchControllers(touchControllerSize());
+      document.getElementById("joystick-area").style.left = "0px";
+      
+      window.addEventListener("gamepadconnected", logGamepadStatus);
     }
 
     const setupKeyboardControls = () => {
       window.addEventListener("keydown", (event) => {
-        switch (event.key.toLowerCase()) {
-          case "w":
-            controller.up = true;
-            break;
-          case "arrowup":
-            controller.up = true;
-            break;
-          case "a":
-            controller.left = true;
-            break;
-          case "arrowleft":
-            controller.left = true;
-            break;
-          case "d":
-            controller.right = true;
-            break;
-          case "arrowright":
-            controller.right = true;
-            break;
-          case "s":
-            controller.down = true;
-            break;
-          case "arrowdown":
-            controller.down = true;
-            break;
-          case "e":
-            controller.interact = true;
-            break;
-        }
+        const key = event.key.toLowerCase();
+        
+        // set controller
+        if (key == "w" || key == "arrowup") controller.up = true;
+        if (key == "a" || key == "arrowleft") controller.left = true;
+        if (key == "s" || key == "arrowdown") controller.down = true;
+        if (key == "d" || key == "arrowright") controller.right = true;
+        if (key == "e" || key == " ") controller.interact = true;
       });
+      window.addEventListener("mousedown", e => controller.interact = true);
+      window.addEventListener("mouseup", e => controller.interact = false);
+      canvas.addEventListener("touchstart", e => controller.interact = true);
+      window.addEventListener("touchend", e => controller.interact = false);
+      window.addEventListener("touchcancel", e => controller.interact = false);
 
       window.addEventListener("keyup", (event) => {
-        switch (event.key.toLowerCase()) {
-          case "w":
-            controller.up = false;
-            break;
-          case "arrowup":
-            controller.up = false;
-            break;
-          case "a":
-            controller.left = false;
-            break;
-          case "arrowleft":
-            controller.left = false;
-            break;
-          case "d":
-            controller.right = false;
-            break;
-          case "arrowright":
-            controller.right = false;
-            break;
-          case "s":
-            controller.down = false;
-            break;
-          case "arrowdown":
-            controller.down = false;
-            break;
-          case "e":
-            controller.interact = false;
-            break;
-        }
+        const key = event.key.toLowerCase();
+
+        // set controller
+        if (key == "w" || key == "arrowup") controller.up = false;
+        if (key == "a" || key == "arrowleft") controller.left = false;
+        if (key == "s" || key == "arrowdown") controller.down = false;
+        if (key == "d" || key == "arrowright") controller.right = false;
+        if (key == "e" || key == " ") controller.interact = false;
       });
     }
 
-    const updateTouchController = (controllerSize = touchControllerSize()) => {
+    const updateTouchControllers = (controllerSize) => {
       if (!useTouchController) return;
-      userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
-      const controller = document.getElementById("touch-controller");
-
-      if (!userHasTouchScreen) {
-        controller.style.display = "none";
-        return;
+      const arrowControl = document.getElementById("touch-arrow-controller");
+      
+      if (!userHasTouchScreen || useTouchJoystick) {
+        const joystickControl = document.getElementById("joystick-area");
+        arrowControl.style.display = "none";
+        joystickControl.style.display = "block";
+        
+        const socket = document.getElementById("joystick-socket");
+        socket.style.width = controllerSize / 2;
+        socket.style.height = controllerSize / 2;
+      } else {
+        // resize
+        const fontSize = controllerSize / 12;
+        arrowControl.style.display = userHasTouchScreen ? "grid" : "none";
+        arrowControl.style.gap = controllerSize / 50 + "px";
+        arrowControl.style.height = controllerSize + "px";
+        arrowControl.style.width = controllerSize + "px";
+        arrowControl.style.fontSize = fontSize + "px";
+  
+        console.log(canvas.getBoundingClientRect())
+        // reposition
+        arrowControl.style.left = canvas.getBoundingClientRect().left + "px";
+        arrowControl.style.bottom = window.innerHeight - canvas.getBoundingClientRect().height + "px";
       }
-
-      // resize
-      const fontSize = controllerSize / 12;
-      controller.style.display = userHasTouchScreen ? "grid" : "none";
-      controller.style.gap = controllerSize / 50 + "px";
-      controller.style.height = controllerSize + "px";
-      controller.style.width = controllerSize + "px";
-      controller.style.fontSize = fontSize + "px";
-
-      // reposition
-      controller.style.left = canvas.getBoundingClientRect().left + "px";
-      controller.style.top = canvas.getBoundingClientRect().top + "px";
+      
+      // refresh event listeners
+      removeTouchListeners();
+      addTouchListeners();
     }
 
-    const initializeTouchController = () => {
-      // functionality
-      const touchController = document.getElementById("touch-controller");
+    //#region event listeners
+    const removeTouchListeners = () => {
+      const arrowController = document.getElementById("touch-arrow-controller");
       const adjustmentControl = document.getElementById("adjust-controller");
-      const halfController = touchControllerSize() / 2;
-
-      adjustmentControl.addEventListener("touchmove", e => {
-        const touch = e.changedTouches[0]
-        touchController.style.left = `${touch.clientX - halfController}px`;
-        touchController.style.top = `${touch.clientY - halfController}px`;
-      });
-      ["touchend", "touchcancel"].forEach(event => {
-        adjustmentControl.addEventListener(event, e => {
-          const rect = touchController.getBoundingClientRect();
-          if (rect.left < -halfController || rect.right > window.innerWidth + halfController || rect.top < -halfController || rect.bottom > window.innerHeight + halfController) {
-            updateTouchController();
-          }
-        });
-      });
+      
+      adjustmentControl.removeEventListener("touchmove", adjustController);
+      adjustmentControl.removeEventListener("touchend", putControllerBack);
+      adjustmentControl.removeEventListener("touchcancel", putControllerBack);
       
       ["up", "left", "right", "down"].forEach(direction => {
-        const control = touchController.children[direction];
-        control.addEventListener("touchstart", e => controller[direction] = true);
-        control.addEventListener("touchend", e => controller[direction] = false);
-        control.addEventListener("touchcancel", e => controller[direction] = false);
+        const control = arrowController.children[direction];
+        control.removeEventListener("touchstart", e => controllerDirectionOn(e, direction));
+        control.removeEventListener("touchend", e => controllerDirectionOff(e, direction));
+        control.removeEventListener("touchcancel", e => controllerDirectionOff(e, direction));
       })
 
-      canvas.addEventListener("touchstart", e => controller.interact = true);
-      canvas.addEventListener("touchend", e => controller.interact = false);
-      canvas.addEventListener("touchcancel", e => controller.interact = false);
-
+      const joystick = document.getElementById("joystick-area");
+      joystick.removeEventListener("touchmove", moveTouchJoystick);
+      joystick.removeEventListener("touchend", releaseTouchJoystick);
+      joystick.removeEventListener("touchcancel", releaseTouchJoystick);
     }
+
+    const addTouchListeners = () => {
+      const arrowController = document.getElementById("touch-arrow-controller");
+      const adjustmentControl = document.getElementById("adjust-controller");
+
+      adjustmentControl.addEventListener("touchmove", adjustController);
+      adjustmentControl.addEventListener("touchend", putControllerBack);
+      adjustmentControl.addEventListener("touchcancel", putControllerBack);
+      
+      ["up", "left", "right", "down"].forEach(direction => {
+        const control = arrowController.children[direction];
+        control.addEventListener("touchstart", e => controllerDirectionOn(e, direction));
+        control.addEventListener("touchend", e => controllerDirectionOff(e, direction));
+        control.addEventListener("touchcancel", e => controllerDirectionOff(e, direction));
+      });
+      
+      const joystick = document.getElementById("joystick-area");
+      joystick.addEventListener("touchmove", moveTouchJoystick);
+      joystick.addEventListener("touchend", releaseTouchJoystick);
+      joystick.addEventListener("touchcancel", releaseTouchJoystick);
+    }
+    
+    const moveTouchJoystick = e => {
+      const touch = e.changedTouches[0];
+      const areaRect = document.getElementById("joystick-area").getBoundingClientRect();
+      const socket = document.getElementById("joystick-socket");
+      const thumb = document.getElementById("joystick-thumb");
+      
+      const touchPoint = new Point(touch.clientX - areaRect.left, touch.clientY);
+      if (!joystickStart) {
+        joystickStart = touchPoint;
+        
+        socket.style.left = joystickStart.x + "px";
+        socket.style.top = joystickStart.y + "px";
+      };
+      
+      const socketRect = socket.getBoundingClientRect();
+      const controllerPoint = new Point(socketRect.x + (socketRect.width / 2) - areaRect.left, socketRect.y + (socketRect.height / 2));
+      
+      const vector = Vector.fromPoints(controllerPoint, touchPoint);
+      vector.magnitude = Math.min(vector.magnitude / socketRect.width, 1);
+      controller.joystick = vector;
+
+      const dx = vector.magnitude * Math.cos(vector.direction);
+      const dy = vector.magnitude * Math.sin(vector.direction);
+
+      // move the joystick thumb
+      socket.style.display = "grid";
+      thumb.style.transform = `translate(${dx * socketRect.width}px, ${dy * socketRect.height}px)`;
+    }
+    const releaseTouchJoystick = e => {
+      controller.joystick = null;
+      joystickStart = null;
+      const thumb = document.getElementById("joystick-thumb");
+      const socket = document.getElementById("joystick-socket");
+      socket.style.display = "none";
+      thumb.style.transform = "translate(0, 0)";
+    }
+
+    const controllerDirectionOn = (e, direction) => {
+      controller[direction] = true;
+    }
+    const controllerDirectionOff = (e, direction) => {
+      controller[direction] = false;
+    }
+    const putControllerBack = e => {
+      const touchController = document.getElementById("touch-arrow-controller");
+      const quarterController = touchControllerSize() / 4;
+      const rect = touchController.getBoundingClientRect();
+
+      if (rect.left < -quarterController || rect.right > window.innerWidth + quarterController || rect.top < -quarterController || rect.bottom > window.innerHeight + quarterController) {
+        updateTouchControllers(touchControllerSize());
+      }
+    }
+    const adjustController = e => {
+      const touch = e.changedTouches[0];
+      const touchController = document.getElementById("touch-arrow-controller");
+      const halfController = touchControllerSize() / 2;
+      touchController.style.left = `${touch.clientX - halfController}px`;
+      touchController.style.top = `${touch.clientY - halfController}px`;
+    }
+
+    const logGamepadStatus = e => {
+      console.log(e);
+    }
+    //#endregion
 
     const drawPlayer = () => {
       ctx.fillStyle = player.color;
@@ -1563,38 +1785,50 @@
     }
 
     const movePlayer = deltaT => {
-      let xSign = Math.sign(player.xVelocity);
-      let ySign = Math.sign(player.yVelocity);
+      const move = player.movement;
+      const targetSpeed = player.targetSpeed;
 
-      // x momentum
-      if (controller.left || controller.right) {
-        if (controller.left) player.xVelocity = Math.max(player.xVelocity - player.acceleration, -player.maxVelocity);
-        if (controller.right) player.xVelocity = Math.min(player.xVelocity + player.acceleration, player.maxVelocity);
+      // Accelerate
+      if (controller.joystick) {
+        const adjustedMagnitude = controller.joystick.magnitude * player.acceleration * deltaT;
+        player.movement = addVectors(player.movement, new Vector(adjustedMagnitude, controller.joystick.direction));
+      };
 
-        xSign = Math.sign(player.xVelocity);
-      } else {
-        if (xSign) player.xVelocity -= player.friction * xSign;
+      if (controller.up) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, -Math.PI / 2));
+      if (controller.left) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, Math.PI));
+      if (controller.down) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, Math.PI / 2));
+      if (controller.right) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, 0));
+
+
+      if (!controller.joystick && !controller.up && !controller.down && !controller.left && !controller.right) {
+        // Decelerate
+        if (player.movement.magnitude > 0) {
+          const frictionVector = new Vector(player.friction * deltaT, player.movement.direction);
+          player.movement = subtractVectors(player.movement, frictionVector);
+        }
+        
+        // Limit
+        if (player.movement.magnitude < 1) {
+          player.movement.magnitude = 0;
+        } 
       }
+      player.movement.magnitude = Math.min(player.maxSpeed, player.movement.magnitude);
 
-      // y momentum 
-      if (controller.up || controller.down) {
-        if (controller.up) player.yVelocity = Math.max(player.yVelocity - player.acceleration, -player.maxVelocity);
-        if (controller.down) player.yVelocity = Math.min(player.yVelocity + player.acceleration, player.maxVelocity);
+      // Move
+      player.x += player.movement.magnitude * Math.cos(player.movement.direction) * deltaT;
+      player.y += player.movement.magnitude * Math.sin(player.movement.direction) * deltaT;
 
-        ySign = Math.sign(player.yVelocity);
-      } else {
-        if (ySign) player.yVelocity -= player.friction * ySign;
-      }
+      handleDoorInteractions(deltaT);
+    }
+    //#endregion
 
-      // move
-      player.x += player.xVelocity;
-      player.y += player.yVelocity;
+    const handleDoorInteractions = deltaT => {
+      let moveTo;
 
-      // keep the player on screen and handle doorway interactions
       if (player.x > canvas.width) {
-        const rightDoors = world.areas[scene].doors.filter(door => door.side == "right" && world.areas[door.destination].unlocked);
-        for (let i = 0; i < rightDoors.length; i++) {
-          const door = rightDoors[i];
+        const doors = world.areas[scene].doors.filter(door => door.side == "right" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
           const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
 
           if (player.y < doorPosition + doorSize && player.y > doorPosition - doorSize) {
@@ -1604,12 +1838,13 @@
           }
         }
 
-        player.xVelocity -= player.acceleration * 2;
+        moveTo = new Point(player.x - player.maxSpeed * 2 * deltaT, player.y);
       }
+
       if (player.x < 0) {
-        const leftDoors = world.areas[scene].doors.filter(door => door.side == "left" && world.areas[door.destination].unlocked);
-        for (let i = 0; i < leftDoors.length; i++) {
-          const door = leftDoors[i];
+        const doors = world.areas[scene].doors.filter(door => door.side == "left" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
           const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
 
           if (player.y < doorPosition + doorSize && player.y > doorPosition - doorSize) {
@@ -1619,12 +1854,13 @@
           }
         }
 
-        player.xVelocity += player.acceleration * 2;
+        moveTo = new Point(player.x + player.maxSpeed * 2 * deltaT, player.y);
       }
+
       if (player.y > canvas.height) {
-        const bottomDoors = world.areas[scene].doors.filter(door => door.side == "bottom" && world.areas[door.destination].unlocked);
-        for (let i = 0; i < bottomDoors.length; i++) {
-          const door = bottomDoors[i];
+        const doors = world.areas[scene].doors.filter(door => door.side == "bottom" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
           const doorPosition = door.position ? canvas.width * door.position : canvas.width / 2;
 
           if (player.x < doorPosition + doorSize && player.x > doorPosition - doorSize) {
@@ -1634,12 +1870,13 @@
           }
         }
       
-        player.yVelocity -= player.acceleration * 2;
+        moveTo = new Point(player.x, player.y - player.maxSpeed * 2 * deltaT);
       }
+
       if (player.y < 0) {
-        const topDoors = world.areas[scene].doors.filter(door => door.side == "top" && world.areas[door.destination].unlocked);
-        for (let i = 0; i < topDoors.length; i++) {
-          const door = topDoors[i];
+        const doors = world.areas[scene].doors.filter(door => door.side == "top" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
           const doorPosition = door.position ? canvas.width * door.position : canvas.width / 2;
 
           if (player.x < doorPosition + doorSize && player.x > doorPosition - doorSize) {
@@ -1649,16 +1886,20 @@
           }
         }
 
-        player.yVelocity += player.acceleration * 2;
+        moveTo = new Point(player.x, player.y + player.maxSpeed * 2 * deltaT);
       }
 
-      // keep track of which shop the player is in
-      if (world.areas[scene].items) updateShopPositions(world.areas[scene].items);
+      // keep the player on screen
+      if (moveTo) {
+        const newVector = Vector.fromPoints(player, moveTo);
+        newVector.magnitude = 2 * player.acceleration;
+        player.movement = addVectors(player.movement, newVector);
+      }
     }
-    //#endregion
 
     //#region particles
-    const moveParticles = () => {
+    const moveParticles = deltaT => {
+      deltaT *= gameSpeed;
       const areaNames = Object.keys(world.areas);
       for (let i = 0; i < areaNames.length; i++) {
         const area = world.areas[areaNames[i]];
@@ -1680,29 +1921,48 @@
           
           // keep the particle on screen
           if (!particle.ignoreWalls) {
-            if (particle.x > canvas.width) particle.xVelocity -= 2;
-            else if (particle.x < 0) particle.xVelocity += 2;
-            if (particle.y > canvas.height) particle.yVelocity -= 2;
-            else if (particle.y < 0) particle.yVelocity += 2;
+            if (particle.wallBounce) {
+              if (particle.x > canvas.width) particle.xVelocity = -Math.abs(particle.xVelocity);
+              else if (particle.x < 0) particle.xVelocity = Math.abs(particle.xVelocity);
+              if (particle.y > canvas.height) particle.yVelocity = -Math.abs(particle.yVelocity);
+              else if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
+            } else {
+              if (particle.x > canvas.width) particle.xVelocity -= 2 * deltaT;
+              else if (particle.x < 0) particle.xVelocity += 2 * deltaT;
+              if (particle.y > canvas.height) particle.yVelocity -= 2 * deltaT;
+              else if (particle.y < 0) particle.yVelocity += 2 * deltaT;
+            }
           }
 
           if (particle.xVelocity || particle.yVelocity) {
             // move
-            particle.x += particle.xVelocity;
-            particle.y += particle.yVelocity;
+            particle.x += particle.xVelocity * deltaT;
+            particle.y += particle.yVelocity * deltaT;
 
-            // slow down
+            // apply friction
             const xSign = Math.sign(particle.xVelocity);
             const ySign = Math.sign(particle.yVelocity);
-            if (xSign) particle.xVelocity -= particle.friction * xSign;
-            if (ySign) particle.yVelocity -= particle.friction * ySign;
+
+            const speedChangeX = particle.xVelocity + particle.friction * -xSign * deltaT;
+            if (xSign == 1) {
+              particle.xVelocity = Math.max(speedChangeX, 0);
+            } else if (xSign == -1) {
+              particle.xVelocity = Math.min(speedChangeX, 0);
+            };
+            const speedChangeY = particle.yVelocity + particle.friction * -ySign * deltaT;
+            if (ySign == 1) {
+              particle.yVelocity = Math.max(speedChangeY, 0);
+            } else if (ySign == -1) {
+              particle.yVelocity = Math.min(speedChangeY, 0);
+            };
           }
 
           if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particleSize }, area);
           if (particle.onFrame) particle.onFrame();
 
           // die off
-          if (--particle.lifespan < 1) {
+          particle.lifespan -= deltaT;
+          if (particle.lifespan <= 0) {
             if (particle.onDeath) particle.onDeath();
             area.particles.splice(j, 1);
           }
@@ -1724,7 +1984,12 @@
           if (!showDrops && isFinite(particle.lifespan)) continue;
         }
         
-        if (ctx.fillStyle != particle.color) ctx.fillStyle = particle.color;
+        // fadeToTransparent requires hue, saturation, lightness, and maxLifespan
+        if (particle.fadeToTransparent) {
+          ctx.fillStyle = `hsla(${particle.hue}, ${particle.saturation}%, ${particle.lightness}%, ${(particle.startingTransparency || 1) * (particle.lifespan / particle.maxLifespan)})`;
+        } else {
+          ctx.fillStyle = particle.color;
+        }
         ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
 
         if (particle.stroke) {
@@ -1762,6 +2027,11 @@
           collect: function() {
             const drops = this.confetti + particleBase;
             for (let i = 0; i < drops; i++) {
+              if (showDrops == 1 && i % 3 > 0) {
+                points += pointsMult;
+                continue;
+              }
+
               main.particles.push({
                 x: this.x,
                 y: this.y,
@@ -1869,9 +2139,7 @@
                 friction: 1,
                 lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
                 color: this.color,
-                onDeath: () => {
-                  points += 10 * pointsMult;
-                },
+                onDeath: () => { points += 10 * pointsMult; },
               });
             }
 
@@ -1972,7 +2240,21 @@
     }
     //#endregion
 
-    //#region utility functions
+    //#region utility 
+    function addVectors(v1, v2) {
+      const p1 = v1.toPoint();
+      const p2 = v2.toPoint();
+      const resultPoint = new Point(p1.x + p2.x, p1.y + p2.y);
+  
+      return Vector.fromPoints(new Point(0, 0), resultPoint);
+    }
+    function subtractVectors(v1, v2) {
+      const p1 = v1.toPoint();
+      const p2 = v2.toPoint();
+      const resultPoint = new Point(p1.x - p2.x, p1.y - p2.y);
+      return Vector.fromPoints(new Point(0, 0), resultPoint);
+    }
+        
     const randomTargetColor = strength => {
       const h = Math.floor(Math.random() * 256);
       const s = Math.trunc(strength * 100);
@@ -1990,10 +2272,12 @@
       const tooltip = document.getElementById("tooltip");
 
       tooltip.innerText = item.tooltip;
+      tooltip.style.transitionDelay = "200ms";
       tooltip.style.opacity = 1
     }
     const hideTooltip = () => {
       const tooltip = document.getElementById("tooltip");
+      tooltip.style.transitionDelay = "0ms";
       tooltip.style.opacity = 0;
     }
     
@@ -2001,33 +2285,26 @@
       // general styles
       ctx.fillStyle = "black";
       ctx.lineWidth = 3;
-      ctx.strokeStyle = "white";
-      ctx.font = "18px serif";
+      ctx.strokeStyle = "rgba(255, 255, 255, .95)";
 
       if (showVersionCode) {
-        // draw version code
-        ctx.textAlign = "left";
-        ctx.fillText(version, 10, 20);
+        ctx.font = "18px serif";
+        ctx.textAlign = "right";
+        ctx.fillText(version, canvas.width - 20, canvas.height - 20);
       }
 
       if (showCurrency) {
-        const drawCurrencies = startHeight => {
-          ctx.textAlign = "center";
-          if (world.areas["garden"].unlocked) {
-            startHeight -= 20
-            ctx.strokeText(`Leaves: ${leaves}`, canvas.width / 2, startHeight + 20);
-            ctx.fillText(`Leaves: ${leaves}`, canvas.width / 2, startHeight + 20);
-          }
-  
-          ctx.strokeText(`Points: ${points}`, canvas.width / 2, startHeight);
-          ctx.fillText(`Points: ${points}`, canvas.width / 2, startHeight);
-        }
-  
-        ctx.textAlign = "center";
-        if (world.areas[scene].doors.find(door => door.side == "bottom")) {
-          drawCurrencies(45);
-        } else {
-          drawCurrencies(canvas.height - 20);
+        ctx.font = "22px arial";
+        ctx.textAlign = "left";
+        
+        const ptText = `Points: ${points}`;
+        ctx.strokeText(ptText, 20, 30);
+        ctx.fillText(ptText, 20, 30);
+
+        if (world.areas["garden"].unlocked) {
+          const leafText = `Leaves: ${leaves}`;
+          ctx.strokeText(leafText, 20, 54);
+          ctx.fillText(leafText, 20, 54);
         }
       }
     }
@@ -2103,48 +2380,65 @@
         }
       }
     }
-
-    const randomEvents = () => {
+    const randomEvents = deltaT => {
       const main = world.areas["main"];
-      
       // main targets
-      if (Math.random() < targetChance && main.targets.length < maxTargets) spawnTarget();
-      if (darkTargetUnlocked && Math.random() < (strictTargetAmountLimit ? darkTargetChance : darkTargetChance / 2) * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets && main.targets.length < Math.max(safeMaxTargets, maxTargets + 10)) spawnTarget(null, null, "dark");
-      if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "explosive");
-      if (goldTargetUnlocked && Math.random() < goldTargetChance * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "gold");
+      if (Math.random() < targetChance * deltaT && main.targets.length < maxTargets) spawnTarget();
+      if (darkTargetUnlocked && Math.random() < (strictTargetAmountLimit ? darkTargetChance * deltaT : darkTargetChance * deltaT / 2) * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets && main.targets.length < Math.max(safeMaxTargets, maxTargets + 10)) spawnTarget(null, null, "dark");
+      if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * deltaT * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "explosive");
+      if (goldTargetUnlocked && Math.random() < goldTargetChance * deltaT * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "gold");
 
       // garden targets
-      if (rainUnlocked && Math.random() < rainTargetChance && world.areas["garden"].specialTargets.length < maxGardenSpecialTargets) spawnTarget(null, null, "rain");
+      if (rainUnlocked && Math.random() < rainTargetChance * deltaT && world.areas["garden"].specialTargets.length < maxGardenSpecialTargets) spawnTarget(null, null, "rain");
     }
 
-    const spawnRain = () => {
+    const spawnRain = deltaT => {
       for (let i = 0; i < rainAmount; i++) {
         world.areas["garden"].particles.push({
-          x: Math.random() * (canvas.width + 60) - 30,
+          x: Math.random() * (canvas.width + canvas.width * .1) - canvas.width * .05,
           y: 0,
           xVelocity: rainAngle,
           yVelocity: rainSpeed,
           friction: 0,
-          lifespan: (Math.random() * (canvas.height * 1.25 / rainSpeed / 60)) * FPS,
+          lifespan: (Math.random() * (canvas.height * 1.25 / rainSpeed / FPS)) * FPS,
           color: "#6495ED84",
           ignoreWalls: true,
           type: "rain",
+          onDeath: function () { 
+            world.areas["garden"].particles.push({
+              x: this.x,
+              y: this.y,
+              xVelocity: 0,
+              yVelocity: 0,
+              friction: 0,
+              lifespan: .4 * FPS,
+              maxLifespan: .4 * FPS,
+              hue: 230,
+              saturation: 55,
+              lightness: 40,
+              startingTransparency: .2,
+              size: 10,
+              fadeToTransparent: true,
+              ignoreWalls: true,
+              type: "rain",
+            })
+          },
         });
       }
 
       rainDuration -= 1;
     }
 
-    const update = () => {
-      movePlayer();
-      moveParticles();
-      randomEvents();
+    const update = deltaT => {
+      movePlayer(deltaT);
+      moveParticles(deltaT);
+      randomEvents(deltaT);
 
-      growCrops();
+      growCrops(deltaT);
       if (!rainDuration) {
         updateGardenWetness();
       } else if (showRain && scene == "garden") {
-        spawnRain();
+        spawnRain(deltaT);
       }
 
       doCollisions(player, world.areas[scene]);
@@ -2152,6 +2446,7 @@
       if (shopFocus) detectPurchase();
 
       doAutoCollection();
+      if (world.areas[scene].items) updateShopPositions(world.areas[scene].items);
     }
 
     const render = () => {
@@ -2197,7 +2492,7 @@
       crop.growth = 0;
     }
 
-    const growCrops = () => {
+    const growCrops = deltaT => {
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
 
@@ -2207,7 +2502,7 @@
           for (let k = 0; k < strip.length; k++) {
             const crop = strip[k];
 
-            if (crop.growth < 1 && Math.random() < cropGrowthChance) crop.growth = Math.min(crop.growth + .1 + (plot.fertility ? .15 : 0) + (plot.wetness ? .1 : 0), 1);
+            if (crop.growth < 1 && Math.random() < cropGrowthChance * deltaT) crop.growth = Math.min(crop.growth + .1 + (plot.fertility ? .15 : 0) + (plot.wetness ? .1 : 0), 1);
           }
         }
       }
@@ -2289,7 +2584,7 @@
     }
 
     const detectPurchase = () => {
-      if (!controller.interact) return;
+      if (!controller.interact || player.movement.magnitude) return;
       const area = world.areas[scene];
 
       if (scene == "settings") {
@@ -2301,7 +2596,7 @@
         shopFocus.onPurchase();
 
         if (showCosmeticParticles) {
-          const drops = shopFocus.level == shopFocus.maxLevel ? Math.min(25 * shopFocus.level, 150) : Math.min(7 * shopFocus.level, 100);
+          const drops = Math.floor((shopFocus.level == shopFocus.maxLevel ? Math.min(25 * shopFocus.level, 150) : Math.min(7 * shopFocus.level, 100)) / (showCosmeticParticles == 1 ? 3 : 1));
           const maxVelo = drops / 8 + 10;
           for (let i = 0; i < drops; i++) {
             area.particles.push({
@@ -2399,17 +2694,18 @@
     }
     //#endregion
 
-    const gameLoop = () => {
-      const now = Date.now();
-      const deltaT = (now - lastFrameTime) / 1000; // seconds
-      lastFrameTime = now;
+    const gameLoop = timestamp => {
+      if (!lastFrameTime) lastFrameTime = timestamp;
+      const deltaT = FPS / (1000 / ((timestamp - lastFrameTime) || 1)); // seconds
+      lastFrameTime = timestamp;
 
-      update();
+      update(deltaT);
       render();
-      setTimeout(gameLoop, 1000 / FPS);
+
+      requestAnimationFrame(gameLoop);
     }
 
-    let lastFrameTime = Date.now();
+    let lastFrameTime = null;
 
     // start the game with a few targets
     for (let i = 0; i < 5; i++) spawnTarget();
@@ -2438,15 +2734,30 @@
       tooltip.style.left = canvas.getBoundingClientRect().width * .75;
     }
     addEventListener("resize", ()=>{
+      userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+
+      if (userHasTouchScreen)  {
+        unlockItems(settingsItems, "allow touch controls");
+        if (useTouchController) unlockItems(settingsItems, "controller size", "use joystick");
+      } else {
+        lockItems(settingsItems, "controller size", "allow touch controls", "use joystick");
+      }
+      
       scaleCanvas();
-      updateTouchController(touchControllerSize());
+      updateTouchControllers(touchControllerSize());
     });
     //#endregion
     
+    //#region initialization
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      points = 10000000000;
+      leaves = 10000000;
+    }
     scaleCanvas();
     setupPlayerControls();
-    gameLoop();
-    //#region warn against using portrait screen orientation
+    requestAnimationFrame(gameLoop);
+
+    // warn against using portrait screen orientation
     if (!screen.orientation.type.includes("landscape")) alert("This game is probably better in landscape orientation.");
     screen.orientation.addEventListener("change", item => {
       if (!screen.orientation.type.includes("landscape"))
