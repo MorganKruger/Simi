@@ -143,16 +143,6 @@
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
     const FPS = 60;
-    const controller = {
-      up: false,
-      left: false,
-      right: false,
-      down: false,
-      interact: false,
-      joystick: null,
-    }
-    const version = "v0.4.3";
-    let userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
 
     class Point {
       constructor(x, y) {
@@ -182,16 +172,26 @@
       }
     }
 
+    const controller = {
+      up: false,
+      left: false,
+      right: false,
+      down: false,
+      interact: false,
+      joystick: new Vector(0, 0),
+    }
+    const version = "v0.4.4";
+    let userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+
     const playerStart = new Point(canvas.width / 2, canvas.height / 2);
     const player = {
       x: playerStart.x,
       y: playerStart.y,
       size: 10,
       movement: Vector.fromPoints(playerStart, playerStart),
-      targetSpeed: null,
       maxSpeed: 8,
-      acceleration: 1.3,
-      friction: 1,
+      acceleration: 1.15,
+      friction: .85,
       color: "rgb(255, 0, 0, 1)",
     }
 
@@ -230,7 +230,9 @@
     let useTouchController = true;
     let useTouchJoystick = true;
     let touchControllerSize = ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2};
+    let gamepadJoystickDeadzone = .15;
 
+    let gamepadCanInteract = true;
     let joystickStart = null;
     const doorColor = "#00000043";
 
@@ -239,16 +241,17 @@
     const itemButtonSize = 50;
     const minimumLabelWidth = 200;
 
+    const targets = new WeakMap();
+
     let points = 0;
     let pointsMult = 1; // base multiplier appllied when gaining points
-    let leaves = 0;
+    let seeds = 0;
     let particleBase = 1; // points from targets
     const particleSize = 8; // visible size of most particles
 
     let normalParticleTime = 1; // amount of time before a basic particle disappears
     let breadthSizeBonus = 10; // increase target breadth effectiveness on average
     let minimumTargetSize = 30;
-    let breadthBonus = 5; // points from target breadth
     let potencyBonus = 10; // points from target potency
     let minimumPotency = 0; // minimum potency (1=100%)
     let maxNormalPotency = .3; // maximum potency (1=100%)
@@ -257,7 +260,7 @@
 
     let maxTargets = 10; // (prevents lag and balances gameplay)
     let safeMaxTargets = 200; // (prevents lag and balances gameplay)
-    let targetChance = .0025; // chance for a new target to appear each frame (1=100%)
+    let targetChance = .005; // chance for a new target to appear each frame (1=100%)
     let maxSpecialTargets = 1; // (balances gameplay)
     let specialTargetCount = 0; // amount of special targets currently in play
     let specialTargetRateMult = 1; // increases the rate of all special target appearances
@@ -283,7 +286,7 @@
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
     let cropGrowthChance = .0003; // chance for garden crops to increase in their 'growth' value by some amount
     const maxCropSize = 28; // maximum physical size for crop display and collision
-    let cropHarvestBonus = 0; // multiplies the amount of leaves harvested from garden crops
+    let cropHarvestBonus = 0; // multiplies the amount of seeds harvested from garden crops
     let gardenStripCount = 0; // sum count of garden strips across all plots
     let rabbitSpeed = 15; // max rabbit speed
     let minWetness = 7000; // minimum amount of frames before garden plot has wetness set to "false"
@@ -340,7 +343,7 @@
             unlockItems(shopItems, "max targets");
           }
 
-          if (this.level + shopItems.find(item => item.id == "max targets").level == 6) {
+          if (this.level + shopItems.find(item => item.id == "max targets").level == 3) {
             unlockItems(shopItems, "double target spawn", "turtle");
           }
 
@@ -362,16 +365,16 @@
         price: 30,
         x: undefined,
         y: undefined,
-        tooltip: "Increase the maximum amount of normal targets allowed before they stop appearing.",
+        tooltip: "Increase the maximum amount of normal targets allowed before they stop appearing",
         onPurchase: function () {
           if (this.level == 1) {
             unlockItems(shopItems, "max potency", "max target width", "unlock garden");
           }
           this.price = Math.round(30 + 30 * this.level ** 1.6);
           maxTargets += 10;
-          this.tooltip = "Increase the maximum amount of normal targets allowed before they stop appearing.";
+          this.tooltip = "Increase the maximum amount of normal targets allowed before they stop appearing";
 
-          if (this.level + shopItems.find(item => item.id == "drop per target").level == 6) {
+          if (this.level + shopItems.find(item => item.id == "drop per target").level == 3) {
             unlockItems(shopItems, "double target spawn", "turtle");
           }
 
@@ -392,14 +395,14 @@
         price: 100,
         x: undefined,
         y: undefined,
-        tooltip: "More colorful targets appear\n\n\n\n* Brighter, more vibrant targets produce more drops when collected.",
+        tooltip: "More colorful targets appear\n\n(i) Vibrant targets produce more drops when collected.",
         onPurchase: function () {
           if (this.level == 1) {
             unlockItems(shopItems, "super potent chance")
           }
           this.price = 100 + Math.round(50 * this.level ** 2);
           maxNormalPotency += .05;
-          this.tooltip = "More colorful targets appear\n\n* Brighter, more vibrant targets produce more drops when collected.";
+          this.tooltip = "More colorful targets appear\n\n(i) Vibrant targets produce more drops when collected.";
 
           if (this.level == this.maxLevel) {
             this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
@@ -411,18 +414,18 @@
       },
       {
         id: "super potent chance",
-        title: "+1% Super Potent Chance",
+        title: "+2% Super Potent Chance",
         unlocked: false,
         level: 0,
         maxLevel: 25,
         price: 50,
         x: undefined,
         y: undefined,
-        tooltip: "Increase chance for very bright targets to appear.\n\n* Super-potent targets produce significantly more drops.",
+        tooltip: "Increase chance for very-vibrant targets to appear\n\n(i) Super-potent targets produce significantly more drops",
         onPurchase: function () {
-          superPotentChance += .01;
+          superPotentChance += .02;
           this.price += 50;
-          this.tooltip = "Increase chance for very bright targets to appear.\n\n* Super-potent targets produce significantly more drops.";
+          this.tooltip = "Increase chance for very-vibrant targets to appear\n\n(i) Super-potent targets produce significantly more drops";
 
           if (this.level == this.maxLevel) {
             this.title = `${Math.round(superPotentChance * 100)}% Super Potent Chance`;
@@ -441,12 +444,12 @@
         price: 25,
         x: undefined,
         y: undefined,
-        tooltip: "Larger normal targets can appear\n\n* Larger targets are easier to collect and produce more drops",
+        tooltip: "Larger normal targets may appear\n\n(i) Larger targets are easier to collect and produce more drops",
         detail: breadthSizeBonus,
         onPurchase: function () {
           this.price = 25 + 15 * this.level;
           breadthSizeBonus += 2;
-          this.tooltip = "Larger normal targets can appear\n\n* Larger targets are easier to collect and produce more drops";
+          this.tooltip = "Larger normal targets may appear\n\n(i) Larger targets are easier to collect and produce more drops";
 
           if (this.level == this.maxLevel) {
             this.title = `+${breadthSizeBonus} Max Target Size`;
@@ -465,7 +468,7 @@
         unlocked: false,
         level: 0,
         maxLevel: 6,
-        price: 100,
+        price: 80,
         x: undefined,
         y: undefined,
         tooltip: `Double normal target spawn chance`,
@@ -497,7 +500,7 @@
         price: 200,
         x: undefined,
         y: undefined,
-        tooltip: "\"Dark\" targets may appear\n\nSPECIAL: produce drops which, then, produce normal targets\n\n* All special targets may appear at the same time; this will not reduce the chance for an explosive target",
+        tooltip: "\"Dark\" targets may appear",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           darkTargetUnlocked = true;
@@ -566,7 +569,7 @@
         price: 500,
         x: undefined,
         y: undefined,
-        tooltip: "\"Explosive\" targets may appear\n\nSPECIAL: release shrapnel which collects surrounding targets",
+        tooltip: "\"Explosive\" targets may appear\n\n(i) All special targets may appear at the same time; purchasing this will not reduce the chance for a dark target",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           explosiveTargetUnlocked = true;
@@ -634,10 +637,10 @@
         level: 0,
         maxLevel: 1,
         price: 100000,
-        leafPrice: 10000,
+        seedPrice: 10000,
         x: undefined,
         y: undefined,
-        tooltip: "Double the duration for which explosive target shrapnel can collect targets",
+        tooltip: "Double the lifetime of explosive target shrapnel",
         onPurchase: function () {
           explosiveLifetimeMult *= 2;
         }
@@ -653,7 +656,7 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        tooltip: "\"Gold\" targets may appear\n\nSPECIAL: produce a trove of high-value drops",
+        tooltip: "\"Gold\" targets may appear",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           goldTargetUnlocked = true;
@@ -784,13 +787,13 @@
         level: 0,
         maxLevel: 3,
         price: 300000,
-        leafPrice: 1000,
+        seedPrice: 1000,
         x: undefined,
         y: undefined,
         tooltip: "Double the value of drops",
         onPurchase: function () {
           this.price += 200000 * this.level;
-          this.leafPrice += 3000 * this.level;
+          this.seedPrice += 3000 * this.level;
           pointsMult *= 2;
 
           this.tooltip = "Double the value of drops";
@@ -810,10 +813,10 @@
         level: 0,
         maxLevel: 2,
         price: 100000,
-        leafPrice: 10000,
+        seedPrice: 10000,
         x: undefined,
         y: undefined,
-        tooltip: "A permanant little buddy appears to collect targets in the main area",
+        tooltip: "A permanant little buddy collects stuff in the main area",
         onPurchase: function () {
           settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
           
@@ -832,10 +835,10 @@
             maxSpeed: turtleSpeed,
           });
 
-          this.tooltip = "A permanant little buddy appears to collect targets in the main area";
+          this.tooltip = "A permanant little buddy collects stuff in the main area";
           
           this.price *= 5;
-          this.leafPrice *= 3;
+          this.seedPrice *= 3;
 
           if (this.level == this.maxLevel) {
             this.title = `${this.maxLevel} Turtles`;
@@ -854,7 +857,7 @@
         price: 250,
         x: undefined,
         y: undefined,
-        tooltip: "Open doors into the garden\n\nUnlock currency: leaves",
+        tooltip: "Open doors into the garden\n\nUnlock currency (seeds)",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           world.areas["garden"].unlocked = true;
@@ -874,10 +877,10 @@
         level: 0,
         maxLevel: maxGardenPlots,
         price: 0,
-        leafPrice: 0,
+        seedPrice: 0,
         x: undefined,
         y: undefined,
-        tooltip: "Garden plots provide space for 5 rows each (where the crops actually grow)",
+        tooltip: "Add a plot to the garden\n\n(i) Each plot provides space for 5 rows",
         onPurchase: function () {
           gardenPlots.push({
             x: null, y: null,
@@ -887,10 +890,10 @@
           });
 
           this.price = Math.round(2500 * this.level ** 1.6);
-          this.leafPrice = 100 * this.level;
+          this.seedPrice = 100 * this.level;
           const farmersMarketItems = world.areas["farmers market"].items;
 
-          this.tooltip = "Garden plots provide space for 5 rows each (where the crops actually grow)";
+          this.tooltip = "Add a plot to the garden\n\n(i) Each plot provides space for 5 rows";
 
           if (this.level == 1) unlockItems(farmersMarketItems, "garden row", "water plot", "enrich plot");
 
@@ -908,7 +911,9 @@
           farmersMarketItems.find(item => item.id == "enrich plot").refresh();
 
           // update the rows upgrade
-          farmersMarketItems.find(item => item.id == "garden row").maxLevel = gardenPlots.length * 5;
+          const rowUpgrade = farmersMarketItems.find(item => item.id == "garden row");
+          rowUpgrade.maxLevel = gardenPlots.length * 5;
+          rowUpgrade.refresh();
         }
       },
       {
@@ -918,15 +923,14 @@
         level: 0,
         maxLevel: 1,
         price: 0,
-        leafPrice: 0,
+        seedPrice: 0,
         x: undefined,
         y: undefined,
         detail: null,
-        tooltip: "Rows designate space to grow crops repeatedly",
+        tooltip: "Add one row to a garden plot\n\n(i) Rows designate space to grow crops repeatedly",
         onPurchase: function () {
           this.price = Math.round(500 * this.level ** 1.5);
-          this.leafPrice = 20 * this.level;
-          this.tooltip = "Rows designate space to grow crops repeatedly";
+          this.seedPrice = 20 * this.level;
 
           let gardenStripCount = 0;
           for (let i = 0; i < gardenPlots.length; i++) {
@@ -958,10 +962,16 @@
           if (this.level == 1) {
             unlockItems(world.areas["farmers market"].items, "crop harvest", "rabbit");
           }
+
+          this.refresh();
+        },
+        refresh: function() {
+          this.tooltip = "Add one row to a garden plot\n\n(i) Rows designate space to grow crops repeatedly";
           if (this.level == this.maxLevel) {
-            this.title = `${gardenStripCount + 1} Garden Rows`;
+            this.title = `${gardenPlots.length * 5} Garden Rows`;
             this.tooltip += `\n\nLevel: ${this.level}`;
           } else {
+            this.title = "+1 Garden Row";
             this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
@@ -972,11 +982,11 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 1000,
-        leafPrice: 10,
+        price: 200,
+        seedPrice: 0,
         x: undefined,
         y: undefined,
-        tooltip: "Watered plots dry up over time, but increase crop growth",
+        tooltip: "Watered plots dry up rather quickly, but increase crop growth",
         onPurchase: function () {
           this.purchasedBefore = true;
           for (let i = 0; i < gardenPlots.length; i++) {
@@ -991,10 +1001,10 @@
         refresh: function () {
           this.maxLevel = gardenPlots.length;
           this.level = gardenPlots.filter(plot => plot.wetness).length;
-          this.price = 1000 + 2000 * this.level;
-          this.leafPrice = 10 + 10 * this.level;
+          this.price = this.purchasedBefore ? 1000 + 2000 * this.level : 200;
+          this.seedPrice = this.purchasedBefore ? 10 + 7 * this.level : 0;
 
-          this.tooltip = "Watered plots dry up over time, but increase crop growth";
+          this.tooltip = "Watered plots dry up rather quickly, but increase crop growth";
 
           if (this.level == this.maxLevel) {
             this.title = "All Plots Watered";
@@ -1011,7 +1021,7 @@
         level: 0,
         maxLevel: 1,
         price: 3000,
-        leafPrice: 20,
+        seedPrice: 20,
         x: undefined,
         y: undefined,
         tooltip: "Fertile plots increase crop growth for a number of harvests, but eventually run out",
@@ -1030,7 +1040,7 @@
           this.maxLevel = gardenPlots.length;
           this.level = gardenPlots.filter(plot => plot.fertility).length;
           this.price = 3000 + 3000 * this.level;
-          this.leafPrice = 20 + 10 * this.level;
+          this.seedPrice = 20 + 7 * this.level;
 
           this.tooltip = "Fertile plots increase crop growth for a number of harvests, but eventually run out";
 
@@ -1052,14 +1062,14 @@
         level: 0,
         maxLevel: 9,
         price: 1000,
-        leafPrice: 10,
+        seedPrice: 10,
         x: undefined,
         y: undefined,
         tooltip: "Crops produce more drops",
         onPurchase: function () {
           cropHarvestBonus += 1;
           this.price = 1000 + 2000 * this.level;
-          this.leafPrice *= 2;
+          this.seedPrice *= 2;
 
           this.tooltip = "Crops produce more drops";
 
@@ -1078,7 +1088,7 @@
         level: 0,
         maxLevel: 1,
         price: 200000,
-        leafPrice: 2500,
+        seedPrice: 2500,
         x: undefined,
         y: undefined,
         tooltip: "Double crop growth",
@@ -1094,10 +1104,10 @@
         level: 0,
         maxLevel: 1,
         price: 200000,
-        leafPrice: 1000,
+        seedPrice: 1000,
         x: undefined,
         y: undefined,
-        tooltip: "\"Rain\" targets may appear in the garden\n\nSPECIAL: begin the rain event which waters plots for a little while",
+        tooltip: "\"Rain\" targets may appear in the garden",
         stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           rainUnlocked = true;
@@ -1112,10 +1122,10 @@
         level: 0,
         maxLevel: 3,
         price: 500,
-        leafPrice: 30,
+        seedPrice: 30,
         x: undefined,
         y: undefined,
-        tooltip: "A permanant little buddy appears to collect targets and crops in the garden",
+        tooltip: "A permanant little buddy collects stuff in the garden",
         onPurchase: function () {
           settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
 
@@ -1128,16 +1138,17 @@
             lifespan: Infinity,
             wallBounce: true,
             color: "white",
-            stroke: "gray",
+            stroke: "rgba(0, 0, 0, .07)",
+            strokeSize: 5,
             isCollector: true,
             movementIsCrucial: true,
             size: 16,
             maxSpeed: rabbitSpeed,
           });
           this.price *= 20;
-          this.leafPrice *= 10;
+          this.seedPrice *= 10;
 
-          this.tooltip = "A permanant little buddy appears to collect targets and crops in the garden";
+          this.tooltip = "A permanant little buddy collects stuff in the garden";
 
           if (this.level == this.maxLevel) {
             this.title = `${this.level} Rabbits`;
@@ -1159,7 +1170,7 @@
         enabled: true,
         x: undefined,
         y: undefined,
-        tooltip: "Determine whether or not the touch controller is displayed\n\n* Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\nENABLED",
+        tooltip: "Determine whether or not the touch controller is displayed\n\n(i) Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\nENABLED",
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
@@ -1180,7 +1191,7 @@
 
           // item update
           this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
-          this.tooltip = `Determine whether or not the touch controller is displayed\n\n* Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\n${this.enabled ? "ENABLED" : "DISABLED"}`;
+          this.tooltip = `Determine whether or not the touch controller is displayed\n\n(i) Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\n${this.enabled ? "ENABLED" : "DISABLED"}`;
         }
       },
       {
@@ -1399,13 +1410,13 @@
         enabled: false,
         x: undefined,
         y: undefined,
-        tooltip: `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
+        tooltip: `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n(i) For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
         color: "rgb(0, 200, 0)",
         onPurchase: function () {
           this.enabled = !this.enabled;
           strictTargetAmountLimit = this.enabled;
           this.color = this.enabled ? "rgb(200, 0, 0)" : "rgb(0, 200, 0)";
-          this.tooltip = `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n* For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
+          this.tooltip = `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n(i) For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
         }
       },
       {
@@ -1478,7 +1489,7 @@
         unlocked: false,
         x: undefined,
         y: undefined,
-        tooltip: `Instantly scramble the positions of all rabbits and turtles\n\n* Useful if they have poor positioning`,
+        tooltip: `Instantly scramble the positions of all rabbits and turtles\n\n(i) Use if they have poor positioning`,
         color: "rgb(0, 200, 0)",
         debounce: false,
         onPurchase: function () {
@@ -1539,23 +1550,6 @@
         }
       }
 
-      let didCollideItem = false;
-      if (area.items) {
-        shopFocus = undefined;
-        
-        for (let i = 0; i < area.items.length; i++) {
-          const item = area.items[i];
-          
-          if (rectsDoCollide(collider, { ...item, size: itemButtonSize })) {
-            didCollideItem = true;
-            showTooltip(item);            
-            if (purchaseIsValid(item)) shopFocus = item;
-            break;
-          }
-        }
-      }
-      if (!didCollideItem) hideTooltip();
-
       // garden collisions (crop targets are organized differently data-wise)
       if (area == world.areas["garden"]) {
         for (let i = 0; i < gardenPlots.length; i++) {
@@ -1576,25 +1570,47 @@
       }
     }
 
+    const doItemCollisions = () => {
+      const area = world.areas[scene];
+      
+      let didCollideItem = false;
+      if (area.items) {
+        shopFocus = undefined;
+        
+        for (let i = 0; i < area.items.length; i++) {
+          const item = area.items[i];
+          
+          if (rectsDoCollide(player, { ...item, size: itemButtonSize })) {
+            didCollideItem = true;
+            showTooltip(item);            
+            if (purchaseIsValid(item)) shopFocus = item;
+            break;
+          }
+        }
+      }
+      if (!didCollideItem) hideTooltip();
+    }
+
     const rectsDoCollide = (rect1, rect2) => {
       const r1Half = rect1.size / 2;
-      const r1 = {
-        top: rect1.y - r1Half,
-        bottom: +rect1.y + r1Half,
-        right: +rect1.x + r1Half,
-        left: rect1.x - r1Half,
-      }
-
+      const r1Top = rect1.y - r1Half;
+      const r1Bottom = rect1.y + r1Half;
+      const r1Left = rect1.x - r1Half;
+      const r1Right = rect1.x + r1Half;
+      
       const r2Half = rect2.size / 2;
-      const r2 = {
-        top: rect2.y - r2Half,
-        bottom: +rect2.y + r2Half,
-        right: +rect2.x + r2Half,
-        left: rect2.x - r2Half,
-      }
+      const r2Top = rect2.y - r2Half;
+      const r2Bottom = rect2.y + r2Half;
+      const r2Left = rect2.x - r2Half;
+      const r2Right = rect2.x + r2Half;
 
-      return (r1.left < r2.right && r1.left > r2.left || r1.right > r2.left && r1.right < r2.right) && (r1.top < r2.bottom && r1.top > r2.top || r1.bottom > r2.top && r1.bottom < r2.bottom);
-    }
+      return (
+        r1Left < r2Right &&
+        r1Right > r2Left &&
+        r1Top < r2Bottom &&
+        r1Bottom > r2Top
+      );
+    };
     //#endregion
 
     //#region player
@@ -1606,8 +1622,6 @@
       addTouchListeners();
       updateTouchControllers(touchControllerSize());
       document.getElementById("joystick-area").style.left = "0px";
-      
-      window.addEventListener("gamepadconnected", logGamepadStatus);
     }
 
     const setupKeyboardControls = () => {
@@ -1660,7 +1674,6 @@
         arrowControl.style.width = controllerSize + "px";
         arrowControl.style.fontSize = fontSize + "px";
   
-        console.log(canvas.getBoundingClientRect())
         // reposition
         arrowControl.style.left = canvas.getBoundingClientRect().left + "px";
         arrowControl.style.bottom = window.innerHeight - canvas.getBoundingClientRect().height + "px";
@@ -1773,10 +1786,6 @@
       touchController.style.left = `${touch.clientX - halfController}px`;
       touchController.style.top = `${touch.clientY - halfController}px`;
     }
-
-    const logGamepadStatus = e => {
-      console.log(e);
-    }
     //#endregion
 
     const drawPlayer = () => {
@@ -1785,38 +1794,45 @@
     }
 
     const movePlayer = deltaT => {
+      // Aliases
       const move = player.movement;
-      const targetSpeed = player.targetSpeed;
+      const js = controller.joystick;
 
       // Accelerate
-      if (controller.joystick) {
-        const adjustedMagnitude = controller.joystick.magnitude * player.acceleration * deltaT;
-        player.movement = addVectors(player.movement, new Vector(adjustedMagnitude, controller.joystick.direction));
-      };
+      let movementMod = player.movement;
+      if (js.magnitude) movementMod = addVectors(movementMod, new Vector(js.magnitude * player.acceleration * deltaT, js.direction));
+      if (controller.up) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, -Math.PI / 2));
+      if (controller.left) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, Math.PI));
+      if (controller.down) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, Math.PI / 2));
+      if (controller.right) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, 0));
 
-      if (controller.up) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, -Math.PI / 2));
-      if (controller.left) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, Math.PI));
-      if (controller.down) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, Math.PI / 2));
-      if (controller.right) player.movement = addVectors(player.movement, new Vector(player.acceleration * deltaT, 0));
+      // save min(prev magnitude & modified direction, new(lower) magnitude & modfied direction). 
+      if (player.movement.magnitude > player.maxSpeed) {
+        player.movement = player.movement.magnitude < movementMod.magnitude ? new Vector(player.movement.magnitude, movementMod.direction) : movementMod;
+      } else {
+        player.movement = movementMod;
+      }
 
+      // Move
+      player.x += player.movement.magnitude * Math.cos(player.movement.direction) * deltaT;
+      player.y += player.movement.magnitude * Math.sin(player.movement.direction) * deltaT;
 
-      if (!controller.joystick && !controller.up && !controller.down && !controller.left && !controller.right) {
-        // Decelerate
+      // Decelerate
+      if (player.movement.magnitude > player.maxSpeed || !(js.magnitude || controller.up || controller.down || controller.left || controller.right)) {
         if (player.movement.magnitude > 0) {
           const frictionVector = new Vector(player.friction * deltaT, player.movement.direction);
           player.movement = subtractVectors(player.movement, frictionVector);
         }
         
-        // Limit
+        // Lower limit
         if (player.movement.magnitude < 1) {
           player.movement.magnitude = 0;
         } 
       }
-      player.movement.magnitude = Math.min(player.maxSpeed, player.movement.magnitude);
 
-      // Move
-      player.x += player.movement.magnitude * Math.cos(player.movement.direction) * deltaT;
-      player.y += player.movement.magnitude * Math.sin(player.movement.direction) * deltaT;
+      // Clamp player towards play area
+      player.x = Math.max(Math.min(player.x, canvas.width * 2), -canvas.width);
+      player.y = Math.max(Math.min(player.y, canvas.height * 2), -canvas.height);
 
       handleDoorInteractions(deltaT);
     }
@@ -1926,6 +1942,9 @@
               else if (particle.x < 0) particle.xVelocity = Math.abs(particle.xVelocity);
               if (particle.y > canvas.height) particle.yVelocity = -Math.abs(particle.yVelocity);
               else if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
+
+              particle.x = Math.max(Math.min(particle.x, canvas.width), 0);
+              particle.y = Math.max(Math.min(particle.y, canvas.height), 0);
             } else {
               if (particle.x > canvas.width) particle.xVelocity -= 2 * deltaT;
               else if (particle.x < 0) particle.xVelocity += 2 * deltaT;
@@ -1940,25 +1959,26 @@
             particle.y += particle.yVelocity * deltaT;
 
             // apply friction
-            const xSign = Math.sign(particle.xVelocity);
-            const ySign = Math.sign(particle.yVelocity);
-
-            const speedChangeX = particle.xVelocity + particle.friction * -xSign * deltaT;
-            if (xSign == 1) {
-              particle.xVelocity = Math.max(speedChangeX, 0);
-            } else if (xSign == -1) {
-              particle.xVelocity = Math.min(speedChangeX, 0);
-            };
-            const speedChangeY = particle.yVelocity + particle.friction * -ySign * deltaT;
-            if (ySign == 1) {
-              particle.yVelocity = Math.max(speedChangeY, 0);
-            } else if (ySign == -1) {
-              particle.yVelocity = Math.min(speedChangeY, 0);
-            };
+            if (particle.friction) {
+              const xSign = Math.sign(particle.xVelocity);
+              const ySign = Math.sign(particle.yVelocity);
+  
+              const speedChangeX = particle.xVelocity + particle.friction * -xSign * deltaT;
+              if (xSign == 1) {
+                particle.xVelocity = Math.max(speedChangeX, 0);
+              } else if (xSign == -1) {
+                particle.xVelocity = Math.min(speedChangeX, 0);
+              };
+              const speedChangeY = particle.yVelocity + particle.friction * -ySign * deltaT;
+              if (ySign == 1) {
+                particle.yVelocity = Math.max(speedChangeY, 0);
+              } else if (ySign == -1) {
+                particle.yVelocity = Math.min(speedChangeY, 0);
+              };
+            }
           }
 
           if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particleSize }, area);
-          if (particle.onFrame) particle.onFrame();
 
           // die off
           particle.lifespan -= deltaT;
@@ -1988,19 +2008,19 @@
         if (particle.fadeToTransparent) {
           ctx.fillStyle = `hsla(${particle.hue}, ${particle.saturation}%, ${particle.lightness}%, ${(particle.startingTransparency || 1) * (particle.lifespan / particle.maxLifespan)})`;
         } else {
-          ctx.fillStyle = particle.color;
+          if (ctx.fillStyle != particle.color) ctx.fillStyle = particle.color;
         }
         ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
 
         if (particle.stroke) {
           ctx.lineWidth = particle.strokeSize || 1;
-          if (ctx.strokeStyle != particle.color) ctx.strokeStyle = particle.color;
+          if (ctx.strokeStyle != particle.stroke) ctx.strokeStyle = particle.stroke;
           ctx.strokeRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
         }
       }
     }
     //#endregion
-
+const spawnTargets = (amt) => { for (let i = 0; i < amt; i++) { spawnTarget() } }
     //#region targets
     const spawnTarget = (x, y, type) => {
       const main = world.areas["main"];
@@ -2010,7 +2030,7 @@
         const superPotent = Math.random() < superPotentChance;
         const potency = superPotent ? superPotentValue : Math.random() * maxNormalPotency;
         const breadth = Math.random();
-        const confetti = Math.trunc(potency * potencyBonus / 2 + breadth * breadthBonus);
+        const confetti = Math.trunc((potency * potencyBonus / 2) + (breadth * (breadthSizeBonus / 4)));
 
         if (strictTargetAmountLimit && main.targets.length >= maxTargets) {
           points += (confetti + particleBase) * pointsMult;
@@ -2049,8 +2069,9 @@
         };
 
         if (superPotent) newTarget.stroke = "#ccc";
-
+        
         main.targets.push(newTarget);
+        targets.set(newTarget, world.areas.main.targets.length)
       } else if (type == "dark") {
         const breadth = Math.random();
 
@@ -2061,7 +2082,7 @@
           color: "black",
           stroke: "white",
           strokeSize: 2,
-          confetti: Math.trunc(breadth * breadthBonus),
+          confetti: Math.trunc(breadth * (breadthSizeBonus / 4)),
           type: type,
           collect: function() {
             const maxVelo = 25 + darkTargetConfettiMult * 2;
@@ -2175,18 +2196,20 @@
             }
             world.areas["farmers market"].items.find(e => e.id == "water plot").refresh();
 
-            // begin target-collection splash effect
-            for (let i = 0; i < this.confetti; i++) {
-              world.areas["garden"].particles.push({
-                x: this.x,
-                y: this.y,
-                xVelocity: Math.trunc(Math.random() * 40 - 20),
-                yVelocity: Math.trunc(Math.random() * 40 - 20),
-                friction: 1,
-                lifespan: Math.trunc((.1 + Math.random() / 4) * FPS),
-                color: this.color,
-                isCosmetic: true,
-              });
+            if (showDrops) {
+              // begin target-collection splash effect
+              for (let i = 0; i < this.confetti; i++) {
+                world.areas["garden"].particles.push({
+                  x: this.x,
+                  y: this.y,
+                  xVelocity: Math.trunc(Math.random() * 40 - 20),
+                  yVelocity: Math.trunc(Math.random() * 40 - 20),
+                  friction: 1,
+                  lifespan: Math.trunc((.1 + Math.random() / 4) * FPS),
+                  color: this.color,
+                  isCosmetic: true,
+                });
+              }
             }
 
             garden.specialTargets.splice(garden.specialTargets.indexOf(this), 1);
@@ -2302,9 +2325,9 @@
         ctx.fillText(ptText, 20, 30);
 
         if (world.areas["garden"].unlocked) {
-          const leafText = `Leaves: ${leaves}`;
-          ctx.strokeText(leafText, 20, 54);
-          ctx.fillText(leafText, 20, 54);
+          const seedText = `Seeds: ${seeds}`;
+          ctx.strokeText(seedText, 20, 54);
+          ctx.fillText(seedText, 20, 54);
         }
       }
     }
@@ -2430,6 +2453,8 @@
     }
 
     const update = deltaT => {
+      checkGamepadInputs();
+
       movePlayer(deltaT);
       moveParticles(deltaT);
       randomEvents(deltaT);
@@ -2442,8 +2467,13 @@
       }
 
       doCollisions(player, world.areas[scene]);
+      doItemCollisions();
 
-      if (shopFocus) detectPurchase();
+      if (shopFocus) {
+        detectPurchase();
+      } else {
+        controller.interact = false;
+      }
 
       doAutoCollection();
       if (world.areas[scene].items) updateShopPositions(world.areas[scene].items);
@@ -2485,7 +2515,7 @@
           friction: 1,
           lifespan: Math.trunc((1 + Math.random() * .5) * FPS),
           color: `hsl(120, 80%, 40%)`,
-          onDeath: () => leaves += 1,
+          onDeath: () => seeds += 1,
         });
       }
 
@@ -2580,11 +2610,11 @@
 
     //#region shop
     const purchaseIsValid = shopItem => {
-      return (shopItem.price ? shopItem.price <= points : true) && (shopItem.leafPrice ? shopItem.leafPrice <= leaves : true) && (shopItem.maxLevel ? shopItem.level < shopItem.maxLevel : true);
+      return (shopItem.price ? shopItem.price <= points : true) && (shopItem.seedPrice ? shopItem.seedPrice <= seeds : true) && (shopItem.maxLevel ? shopItem.level < shopItem.maxLevel : true);
     }
 
     const detectPurchase = () => {
-      if (!controller.interact || player.movement.magnitude) return;
+      if (!controller.interact || (player.movement.magnitude && useTouchController && userHasTouchScreen)) return;
       const area = world.areas[scene];
 
       if (scene == "settings") {
@@ -2592,7 +2622,7 @@
       } else {
         shopFocus.level += 1;
         points -= shopFocus.price;
-        if (shopFocus.leafPrice) leaves -= shopFocus.leafPrice;
+        if (shopFocus.seedPrice) seeds -= shopFocus.seedPrice;
         shopFocus.onPurchase();
 
         if (showCosmeticParticles) {
@@ -2657,7 +2687,7 @@
           ctx.fillStyle = item.color;
         } else if (item.level === item.maxLevel) {
           ctx.fillStyle = "hsl(47, 100%, 50%)";
-        } else if (item.price <= points && (item.leafPrice ? item.leafPrice <= leaves : true)) {
+        } else if (item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true)) {
           ctx.fillStyle = "rgb(0, 200, 0)";
         } else {
           ctx.fillStyle = "rgb(200, 0, 0)";
@@ -2688,12 +2718,32 @@
         // draw pricing
         const tempStrings = [];
         if (item.price) tempStrings.push(`${item.price} points`);
-        if (item.leafPrice) tempStrings.push(`${item.leafPrice} leaves`);
+        if (item.seedPrice) tempStrings.push(`${item.seedPrice} seeds`);
         ctx.fillText(tempStrings.join(", "), item.x, item.y + itemButtonSize + 20);
       }
     }
     //#endregion
 
+    function checkGamepadInputs() {
+      const gamepads = navigator.getGamepads();
+      for (let i = 0; i < gamepads.length; i++) {
+        const gamepad = gamepads[i];
+        if (gamepad) {
+          gamepadVector = Vector.fromPoints(new Point(0, 0), new Point(gamepad.axes[0], gamepad.axes[1]));
+          gamepadVector.magnitude = gamepadVector.magnitude < gamepadJoystickDeadzone ? 0 : gamepadVector.magnitude;
+          controller.joystick = gamepadVector;
+
+          if (gamepad.buttons[0].pressed) {
+            if (gamepadCanInteract) {
+              controller.interact = true;
+
+              gamepadCanInteract = false;
+              setTimeout(() => gamepadCanInteract = true, 240);
+            }
+          }
+        }
+      }
+    }
     const gameLoop = timestamp => {
       if (!lastFrameTime) lastFrameTime = timestamp;
       const deltaT = FPS / (1000 / ((timestamp - lastFrameTime) || 1)); // seconds
@@ -2728,10 +2778,10 @@
         canvas.style.transform = `scale(${scale.x})`;
       }
 
+      const mult = Math.min(canvas.getBoundingClientRect().width / canvas.width, canvas.getBoundingClientRect().height / canvas.height)
       const tooltip = document.getElementById("tooltip");
-      
-      tooltip.style.maxWidth = canvas.getBoundingClientRect().width * .75;
-      tooltip.style.left = canvas.getBoundingClientRect().width * .75;
+      tooltip.style.fontSize = `${2 * mult}rem`;
+      tooltip.style.padding = `${2 * mult}rem`;
     }
     addEventListener("resize", ()=>{
       userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
@@ -2751,7 +2801,7 @@
     //#region initialization
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       points = 10000000000;
-      leaves = 10000000;
+      seeds = 10000000;
     }
     scaleCanvas();
     setupPlayerControls();
