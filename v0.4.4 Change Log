@@ -1,0 +1,19 @@
+v0.4.4 (The Access-And-Control Update)
+
+first purchase of "water 1 plot" garden upgrade is much cheaper
+
+reduced price scaling of "water 1 plot" and "enrich 1 plot" garden upgrades
+
+shop/settings interactions while moving are now only disabled when the player has a touch screen that is also enabled in the settings
+
+added gamepad support for movement and interaction with stick-drift accomodation
+
+modified player movement
+
+fixed a bug where passing over a shop/settings item would automatically interact if the interact button was pressed beforehand
+
+clamped the distance in which the player can exit the game area
+
+clamped rabbits and turtles to remain on screen (They would mysteriously disappear, and I never saw how)
+
+reduced and tweaked many tooltip messages

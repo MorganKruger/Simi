@@ -1,0 +1,45 @@
+v0.4.3 (The Access-And-Control Update)
+
+fixed another small bug with enabling touchscreen mid-game
+
+can now click/tap the window to interact (ie. purchase shop items)
+
+improved rain visuals
+
+dark targets are now unlocked before explosive targets
+
+finally fixed the framerate disparity where game speed varied between different hrz monitors
+
+replaced player movement system internally
+
+added joystick controls for touch screen (default)
+
+added setting to switch between arrow/joystick touch controls
+
+reduced options in touch controller size setting
+
+added setting to choose a side for the joystick controller to be used on
+
+"shuffle buddies" option in settings now has debounce time
+
+rabbits and turtles are now more consistent when bouncing
+
+the spacebar may now interact with shop items
+
+added intermediate option to "show particles" and "show drops" items in settings (none/some/all)
+
+moved currencies to the top left regardless of game scene
+
+moved version code to bottom right
+
+shop interactions straight through touch-screen controls have been disabled; less accidental purchases/settings-toggles
+
+removed tooltip fade-out delay (tooltip used to begin fading 200ms later)
+
+player can no longer interact with shop/settings items if moving
+
+added setting to lock the arrow controller in place
+
+some amount of each button on the arrow touch controller should now, always, remain on screen
+
+arrow touch controller now starts at the bottom of the screen

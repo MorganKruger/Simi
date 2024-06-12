@@ -1,0 +1,31 @@
+v0.4.0 (The Access-And-Control Update)
+
+slightly reduce target drop velocity for the start (more satisfying)
+
+allow canvas to scale for different devices
+
+display doorways with a thin rectangle
+
+increase value of gold targets
+
+reduce max targets upgarade price scaling
+
+too easy to forget about garden -> make the first rabbit quite cheap
+
+make final shop purchase of an item more satisfying
+
+make plot fertilizer last for a certain number of crop harvests
+
+make entire farmers market cheaper
+
+water and enrich upgrades start with no price, but probably should
+
+add landscape orientation warning (landscape is preffered)
+
+implement touch controls
+
+shop interaction hint for mobile
+
+make version text slightly smaller
+
+improve shop price scaling

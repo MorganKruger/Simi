@@ -1,0 +1,39 @@
+v0.4.1 (The Access-And-Control Update)
+
+* dark target drops don't work for any dark targets that were already spawned before purchase
+                                                       
+actually centered the shop items with the doorway
+
+add settings menu door in the shops
+
+add a "show rain" setting (on/off)
+
+add a "allow touch controls" setting (on/off)
+
+add a "show particles" setting (on/off)
+
+add a "show doorway" setting (none/doorways/labels/both)
+
+add a "door size" setting (small/med/large)
+
+add a "shuffle buddies" setting (randomly reposition rabbits + turtles)
+
+add a "show version code" setting (on/off)
+
+add a "show currency" setting (on/off)
+
+add a "target limit" setting (lax/strict) (half "dark" target spawn rate as well)
+
+replaced drop pick-up time upgrade with a setting (low/med/high)
+
+stopped spawning dark targets when there are too many normal targets
+
+darkened the shop item gold color slightly
+
+add gold border to certain shop items (ie. "Unlock Garden")
+
+tweaked garden rain event
+
+* "water 1 plot" shop item erroneously gets "new!" label when it hits level 0 again.
+
+* shop items flash when being replaced by another one

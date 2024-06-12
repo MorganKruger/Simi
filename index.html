@@ -4,181 +4,355 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simi</title>
+  <title>Canvas</title>
   <style>
-    html,
-    body {
+    html, body {
+      height: 100%;
       margin: 0;
       padding: 0;
-      height: 100%;
-      width: 100%;
+    }
+
+    html {
       background-color: linen;
-      display: grid;
-      display: flex;
-      align-items: center;
+      touch-action: none;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    body {
+      justify-items: center;
       justify-content: center;
-    }
-
-    #main {
       display: grid;
-      grid-template-rows: auto auto;
+      overflow: hidden;
+    }
+    
+    canvas {
+      top: 0;
       background-color: #ffffff;
-      border-collapse: collapse;
     }
 
-    canvas {
-      width: 100%;
-      height: 100%;
+    #tooltip {
+      z-index: 1;
+      opacity: 0;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 2rem;
+      background-color: #00000082;
+      color: white;
+      text-align: center;
+      transition-duration: 105ms;
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 600;
+      text-shadow: 0 0 8px black;
+      pointer-events: none;
     }
+    
+    #touch-arrow-controller {
+      display: none;
+      position: absolute;
+      grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+      user-select: none;
+      pointer-events: none;
+      z-index: 2;
+      line-height: 0;
+
+      & > * {
+        background-color: #00000029;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 3em;
+        pointer-events: initial;
+
+        &:active {
+          background-color: transparent;
+        }
+      }
+
+      & #up {
+        grid-area: 1 / 2;
+      }
+
+      & #left {
+        grid-area: 2 / 1;
+      }
+
+      & #adjust-controller {
+        grid-area: 2 / 2;
+      }
+
+      & #right {
+        grid-area: 2 / 3;
+      }
+
+      & #down {
+        grid-area: 3 / 2;
+      }
+    }
+
+    #joystick-area {
+      position: absolute;
+      z-index: 2;
+      height: 100%;
+      width: 40%;
+      
+      & #joystick-socket {
+        display: none;
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        border: 1px solid #00000029;
+        border-radius: 50%;
+        align-items: center;
+        justify-items: center;
+        transform: translate(-50%, -50%);
+  
+        & #joystick-thumb {
+          background-color: #00000029;
+          width: 90%;
+          height: 90%;
+          border-radius: 50%;
+        }
+      }
+    }
+
   </style>
 </head>
 
 <body>
   <div id="main">
-    <canvas id="canvas" width="1600" height="900" style="pointer-events: none;"></canvas>
+    <div id="touch-arrow-controller">
+      <div id="up">&blacktriangle;</div>
+      <div id="left">&blacktriangleleft;</div>
+      <div id="adjust-controller">&there4;</div>
+      <div id="right">&blacktriangleright;</div>
+      <div id="down">&blacktriangledown;</div>
+    </div>
+    <div id="joystick-area">
+      <div id="joystick-socket">
+        <div id="joystick-thumb"></div>
+      </div>
+    </div>
+    <div id="tooltip"></div>
+    <canvas id="canvas" width="1600" height="900"></canvas>
   </div>
 
   <script defer>
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
     const FPS = 60;
-    const keys = {};
-    const version = "v0.3.3";
 
+    class Point {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+    }
+    class Vector {
+      constructor(mag, dir) {
+        this.magnitude = mag;
+        this.direction = dir;
+      }
+
+      static fromPoints(p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const magnitude = Math.sqrt(dx * dx + dy * dy);
+        const direction = Math.atan2(dy, dx);
+        return new Vector(magnitude, direction);
+      }
+
+      toPoint() {
+        return new Point(
+          this.magnitude * Math.cos(this.direction),
+          this.magnitude * Math.sin(this.direction)
+        );
+      }
+    }
+
+    const controller = {
+      up: false,
+      left: false,
+      right: false,
+      down: false,
+      interact: false,
+      joystick: new Vector(0, 0),
+    }
+    const version = "v0.4.4";
+    let userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+
+    const playerStart = new Point(canvas.width / 2, canvas.height / 2);
     const player = {
-      x: canvas.width / 2,
-      y: canvas.height / 2,
+      x: playerStart.x,
+      y: playerStart.y,
       size: 10,
-      xVelocity: 0,
-      yVelocity: 0,
-      acceleration: 2,
-      friction: 2,
-      maxVelocity: 14,
+      movement: Vector.fromPoints(playerStart, playerStart),
+      maxSpeed: 8,
+      acceleration: 1.15,
+      friction: .85,
       color: "rgb(255, 0, 0, 1)",
     }
 
+    class Area {
+      constructor(doorsArray, particlesArray, targetsArray, itemsArray, backgroundColor, areaIsUnlocked) {
+        this.doors = doorsArray;
+        this.particles = particlesArray;
+        this.targets = targetsArray;
+        this.items = itemsArray;
+        this.color = backgroundColor;
+        this.unlocked = areaIsUnlocked;
+      }
+    }
+    class Door {
+      constructor(whichSide, destination, doorPosition) {
+        this.side = whichSide;
+        this.destination = destination;
+        this.position = doorPosition;
+      }
+    }
+
     let scene = "main";
-    let sceneDoors = { "main": "shop" };
-    const doorSize = 60;
+    let gameSpeed = .6;
+
+    // settings
+    let doorSize = 70;
+    let showDoorLabel = true;
+    let showDoorway = true;
+    let showVersionCode = true;
+    let showCurrency = true;
+    let showNormalTargets = true;
+    let showSpecialTargets = true;
+    let showCosmeticParticles = 2;
+    let showDrops = 2;
+    let strictTargetAmountLimit = false;
+    let useTouchController = true;
+    let useTouchJoystick = true;
+    let touchControllerSize = ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2};
+    let gamepadJoystickDeadzone = .15;
+
+    let gamepadCanInteract = true;
+    let joystickStart = null;
+    const doorColor = "#00000043";
 
     let shopFocus;
-    const shopButtonSize = 50;
+    let interactionMessage = userHasTouchScreen ? "tap" : "E";
+    const itemButtonSize = 50;
     const minimumLabelWidth = 200;
 
+    const targets = new WeakMap();
+
     let points = 0;
-    let pointsMult = 1;
+    let pointsMult = 1; // base multiplier appllied when gaining points
     let seeds = 0;
     let particleBase = 1; // points from targets
-    const particleSize = 8;
+    const particleSize = 8; // visible size of most particles
 
-    let normalParticleTime = 2;
+    let normalParticleTime = 1; // amount of time before a basic particle disappears
     let breadthSizeBonus = 10; // increase target breadth effectiveness on average
     let minimumTargetSize = 30;
-    let breadthBonus = 5; // points from target breadth
-    let potencyBonus = 5; // points from target potency
+    let potencyBonus = 10; // points from target potency
     let minimumPotency = 0; // minimum potency (1=100%)
     let maxNormalPotency = .3; // maximum potency (1=100%)
     let superPotentChance = .05; // chance for 100% potency (1=100%)
     let superPotentValue = 3 // amount of bonus particles for super potency
 
-    const targets = [];
-    const specialTargets = [];
-    const autoCollectTargets = [];
-    const gardenTargets = [];
-    //
-    const particles = [];
-    const shopParticles = [];
-    const gardenParticles = [];
-
     let maxTargets = 10; // (prevents lag and balances gameplay)
-    let targetChance = .01; // chance for a new target to appear each frame (1=100%)
+    let safeMaxTargets = 200; // (prevents lag and balances gameplay)
+    let targetChance = .005; // chance for a new target to appear each frame (1=100%)
     let maxSpecialTargets = 1; // (balances gameplay)
+    let specialTargetCount = 0; // amount of special targets currently in play
     let specialTargetRateMult = 1; // increases the rate of all special target appearances
     //
-    let darkTargetUnlocked = false;
-    let darkTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
+    let darkTargetUnlocked = false; // dark target can spawn
+    let darkTargetChance = .0002; // chance for a new dark target to appear each frame (1=100%)
     let darkTargetConfettiMult = 1; // amount of particles from dark targets
     //
-    let explosiveTargetUnlocked = false;
-    let explosiveTargetChance = .0005; // chance for a new dark target to appear each frame (1=100%)
-    let explosiveConfettiMult = 1;
-    let explosiveLifetimeMult = 1;
-    let minExplosiveConfetti = 30;
+    let explosiveTargetUnlocked = false; // explosive target can spawn
+    let explosiveTargetChance = .0002; // chance for a new dark target to appear each frame (1=100%)
+    let explosiveLifetimeMult = 1; // increase the amount of time that the explosive particles last for
+    let minExplosiveConfetti = 30; // minimum amount of particles that spawn from an explosive target
+    let explosiveConfettiMult = 1; // increase the amount of particles that spawn from an explosive target
     //
-    let goldTargetUnlocked = false;
-    let goldTargetChance = .0005; // chance for a new gold target to appear each frame (1=100%)
+    let goldTargetUnlocked = false; // gold target can spawn
+    let goldTargetChance = .0002; // chance for a new gold target to appear each frame (1=100%)
     let goldTargetDecay = 1; // size reduction per frame of the gold target
-    let goldTargetSize = 50; // size reduction per frame of the gold target
+    let goldTargetSize = 45; // size reduction per frame of the gold target
     const goldTargetMinSize = 25; // minimum size before a gold target disappears
     let goldTargetDrop = 1; // gold target shoots 2 particles per frame instead of 1
-    let goldAutoCollect = false; 87
+    let goldAutoCollect = false; // gold targets auto collect after being collected once
 
-    let gardenIsUnlocked = false; // boolean determines whether the garden is enabled
     const maxGardenPlots = 15; // the maximum allowed number of garden plots to be displayed in the garden area
-    let cropGrowthChance = .0005; // chance for garden crops to increase in their 'growth' value by some amount
+    let cropGrowthChance = .0003; // chance for garden crops to increase in their 'growth' value by some amount
     const maxCropSize = 28; // maximum physical size for crop display and collision
     let cropHarvestBonus = 0; // multiplies the amount of seeds harvested from garden crops
-    let gardenStrips = 0; // sum count of garden strips across all plots
+    let gardenStripCount = 0; // sum count of garden strips across all plots
     let rabbitSpeed = 15; // max rabbit speed
-    let minWetLifespan = 3000; // minimum amount of frames before garden plot has isWet set to "false"
-    let wetRandRange = 2000; // the range of frames after the minWetLifespan for which a garden plot may remain wet
-    let sunlampUnlocked = false;
-    const maxGardenTargets = 2;
+    let minWetness = 7000; // minimum amount of frames before garden plot has wetness set to "false"
+    let wetRandRange = 4000; // the max amount of frames after the minWetness for which a garden plot may remain wet
+    let fertilizerAmount = 200; // number of crop harvests before a plot goes infertile again
+    const maxGardenSpecialTargets = 1;
     //
-    let rainUnlocked = false;
-    let rainTargetChance = .0001; // .0001 = 1/10000 frames
+    let rainUnlocked = false; // whether or not rain targets are allowed to spawn
+    let rainTargetChance = .00005; // .00005 = 1/20000 frames / 3600 frames = ~5.5 minutes
     let rainDuration = 0; // duration of the rain event
-    let rainSpeed = 30; // visible speed of the rain particles
+    let showRain = true; // whether or not rain renders
+    let rainSpeed = 35; // visible speed of the rain particles
     let rainAngle = 0; // x velocity for the rain particles
     let rainAmount = 3;  // amount of rain particles to be spawned each frame during rain
     let rainIntensity = 1; // limiting value that multiplies against other rain values
 
     let turtleSpeed = 6;
 
-    const unlockShopItems = (...itemIDs) => {
+    const unlockItems = (itemList, ...itemIDs) => {
       for (let i = 0; i < itemIDs.length; i++) {
-        const item = shopItems.find(e => e.id == itemIDs[i]);
+        const item = itemList.find(item => item.id == itemIDs[i]);
         item.unlocked = true;
       }
+      updateShopPositions(itemList)
     }
-
-    const unlockFarmersMarketItems = (...itemIDs) => {
+    const lockItems = (itemList, ...itemIDs) => {
       for (let i = 0; i < itemIDs.length; i++) {
-        const item = farmersMarketItems.find(e => e.id == itemIDs[i]);
-        item.unlocked = true;
+        const item = itemList.find(item => item.id == itemIDs[i]);
+        item.unlocked = false;
+        item.x = null;
+        item.y = null;
       }
     }
 
     let shopItems = [
-      // basic upgrades
+      //#region basic upgrades
       {
         id: "drop per target",
         title: "+1 Drop Per Target",
         unlocked: true,
         level: 0,
-        maxLevel: 14,
+        maxLevel: 9,
         price: 20,
         x: undefined,
         y: undefined,
-        detail: particleBase,
+        tooltip: "Increase the base amount of drops when collecting a normal target",
         onPurchase: function () {
           this.price += 30 * this.level;
           particleBase += 1;
-          this.detail = particleBase;
+
+          this.tooltip = "Increase the base amount of drops when collecting a normal target";
 
           if (this.level == 1) {
-            unlockShopItems("max targets");
+            unlockItems(shopItems, "max targets");
           }
 
-          if (this.level + shopItems.find(e => e.id == "max targets").level == 8) {
-            unlockShopItems("double target spawn", "half pick up time");
+          if (this.level + shopItems.find(item => item.id == "max targets").level == 3) {
+            unlockItems(shopItems, "double target spawn", "turtle");
           }
 
           if (this.level == this.maxLevel) {
-            unlockShopItems("double points");
-
-            this.detail = null;
+            unlockItems(shopItems, "double points");
             this.title = `+${particleBase} Drops Per Target`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -187,26 +361,28 @@
         title: "+10 Max Targets",
         unlocked: false,
         level: 0,
-        maxLevel: 19,
-        price: 100,
+        maxLevel: 29,
+        price: 30,
         x: undefined,
         y: undefined,
-        detail: maxTargets,
+        tooltip: "Increase the maximum amount of normal targets allowed before they stop appearing",
         onPurchase: function () {
           if (this.level == 1) {
-            unlockShopItems("max potency", "max target width", "unlock garden");
+            unlockItems(shopItems, "max potency", "max target width", "unlock garden");
           }
-          this.price = Math.round(this.price * 1.5);
+          this.price = Math.round(30 + 30 * this.level ** 1.6);
           maxTargets += 10;
-          this.detail = maxTargets;
+          this.tooltip = "Increase the maximum amount of normal targets allowed before they stop appearing";
 
-          if (this.level + shopItems.find(e => e.id == "drop per target").level == 8) {
-            unlockShopItems("double target spawn", "half pick up time");
+          if (this.level + shopItems.find(item => item.id == "drop per target").level == 3) {
+            unlockItems(shopItems, "double target spawn", "turtle");
           }
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${maxTargets} Max Targets`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -219,111 +395,166 @@
         price: 100,
         x: undefined,
         y: undefined,
-        detail: `${Math.round(maxNormalPotency * 100)}%`,
+        tooltip: "More colorful targets appear\n\n(i) Vibrant targets produce more drops when collected.",
         onPurchase: function () {
           if (this.level == 1) {
-            unlockShopItems("super potent chance")
+            unlockItems(shopItems, "super potent chance")
           }
-          this.price += 200;
+          this.price = 100 + Math.round(50 * this.level ** 2);
           maxNormalPotency += .05;
-          this.detail = `${Math.round(maxNormalPotency * 100)}%`;
+          this.tooltip = "More colorful targets appear\n\n(i) Vibrant targets produce more drops when collected.";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${Math.round(maxNormalPotency * 100)}% Max Potency`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
         id: "super potent chance",
-        title: "+1% Super Potent Chance",
+        title: "+2% Super Potent Chance",
         unlocked: false,
         level: 0,
         maxLevel: 25,
         price: 50,
         x: undefined,
         y: undefined,
-        detail: `${Math.round(superPotentChance * 100)}%`,
+        tooltip: "Increase chance for very-vibrant targets to appear\n\n(i) Super-potent targets produce significantly more drops",
         onPurchase: function () {
-          superPotentChance += .01;
+          superPotentChance += .02;
           this.price += 50;
-          this.detail = `${Math.round(superPotentChance * 100)}%`;
+          this.tooltip = "Increase chance for very-vibrant targets to appear\n\n(i) Super-potent targets produce significantly more drops";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${Math.round(superPotentChance * 100)}% Super Potent Chance`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
         id: "max target width",
-        title: "+2 Max Target Width",
+        title: "+2 Max Target Size",
         unlocked: false,
         level: 0,
         maxLevel: 40,
-        price: 50,
+        price: 25,
         x: undefined,
         y: undefined,
+        tooltip: "Larger normal targets may appear\n\n(i) Larger targets are easier to collect and produce more drops",
         detail: breadthSizeBonus,
         onPurchase: function () {
-          this.price += 50;
+          this.price = 25 + 15 * this.level;
           breadthSizeBonus += 2;
-          this.detail = breadthSizeBonus;
+          this.tooltip = "Larger normal targets may appear\n\n(i) Larger targets are easier to collect and produce more drops";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `+${breadthSizeBonus} Max Target Width`;
+            this.title = `+${breadthSizeBonus} Max Target Size`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
 
-      // intermediate 
+      //#region intermediate upgrades
       {
         id: "double target spawn",
         title: "x2 Target Spawn Rate",
         unlocked: false,
         level: 0,
         maxLevel: 6,
-        price: 100,
+        price: 80,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: `Double normal target spawn chance`,
         onPurchase: function () {
           if (this.level == 1) {
-            unlockShopItems("unlock explosive target")
+            unlockItems(shopItems, "unlock dark target")
           }
 
           this.price *= 5;
           targetChance *= 2;
-          this.detail = `x${2 ** this.level}`;
+          this.tooltip = `Double normal target spawn chance`;
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${2 ** this.level} Target Spawn Rate`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
+          }
+        }
+      },
+      
+      // dark
+      {
+        id: "unlock dark target",
+        title: "Unlock Dark Target",
+        unlocked: false,
+        level: 0,
+        maxLevel: 1,
+        price: 200,
+        x: undefined,
+        y: undefined,
+        tooltip: "\"Dark\" targets may appear",
+        stroke: "hsl(47, 100%, 50%)",
+        onPurchase: function () {
+          darkTargetUnlocked = true;
+          spawnTarget(null, null, "dark");
+          unlockItems(shopItems, "more dark targets", "double dark drops", "unlock explosive target", "max special targets");
+          shopItems.splice(shopItems.indexOf(this), 1);
+        }
+      },
+      {
+        id: "more dark targets",
+        title: "20% More Dark Targets",
+        unlocked: false,
+        level: 0,
+        maxLevel: 10,
+        price: 200,
+        x: undefined,
+        y: undefined,
+        tooltip: "Increase the spawn rate of dark targets",
+        onPurchase: function () {
+          this.price = Math.round(this.price * 1.2);
+          darkTargetChance *= 1.2;
+
+          this.tooltip = "Increase the spawn rate of dark targets";
+
+          if (this.level == this.maxLevel) {
+            this.title = "More Dark Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
-        id: "half pick up time",
-        title: "Half Drop Pick-Up Time",
+        id: "double dark drops",
+        title: "2x Dark Drops",
         unlocked: false,
         level: 0,
-        maxLevel: 3,
-        price: 100,
+        maxLevel: 2,
+        price: 1000,
         x: undefined,
         y: undefined,
-        detail: normalParticleTime,
+        tooltip: "Double the number of target-spawning drops from dark targets",
+        unlocked: false,
         onPurchase: function () {
-          if (this.level == 1) {
-            unlockShopItems("turtle");
-          }
-          this.price *= 10;
-          normalParticleTime /= 2;
-          this.detail = normalParticleTime;
+          darkTargetConfettiMult *= 2;
+          this.price *= 3;
+
+          this.tooltip = "Double the number of target-spawning drops from dark targets";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `${normalParticleTime} Drop Pick-Up Time`;
+            this.title = `x${darkTargetConfettiMult} Dark Drops`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -335,14 +566,16 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 200,
+        price: 500,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Explosive\" targets may appear\n\n(i) All special targets may appear at the same time; purchasing this will not reduce the chance for a dark target",
+        stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           explosiveTargetUnlocked = true;
-
-          unlockShopItems("more explosive targets", "double explosive target drops", "unlock dark target", "max special drops", "double special target rate");
+          
+          spawnTarget(null, null, "explosive");
+          unlockItems(shopItems, "more explosive targets", "double explosive target drops", "unlock gold target", "double special target rate");
 
           shopItems.splice(shopItems.indexOf(this), 1);
         }
@@ -353,36 +586,47 @@
         unlocked: false,
         level: 0,
         maxLevel: 10,
-        price: 300,
+        price: 400,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Increase the spawn rate of explosive targets",
         onPurchase: function () {
           explosiveTargetChance *= 1.2;
           this.price = Math.round(this.price * 1.2);
 
+          this.tooltip = "Increase the spawn rate of explosive targets";
+
           if (this.level == this.maxLevel) {
             this.title = "More Explosive Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
         id: "double explosive target drops",
-        title: "x2 Explosive Target Drops",
+        title: "x2 Explosive Shrapnel",
         unlocked: false,
         level: 0,
-        maxLevel: 3,
-        price: 500,
+        maxLevel: 2,
+        price: 1200,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double the amount of target-collecting shrapnel released from explosive targets",
         unlocked: false,
         onPurchase: function () {
           explosiveConfettiMult *= 2;
           this.price *= 5;
 
+          this.tooltip = "Double the amount of target-collecting shrapnel released from explosive targets";
+
           if (this.level == this.maxLevel) {
-            this.title = `x${2 ** this.maxLevel} Explosive Target Drops`;
+            this.title = `x${2 ** this.maxLevel} Explosive Shrapnel`;
+            unlockItems(shopItems, "double explosive time");
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -396,68 +640,9 @@
         seedPrice: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double the lifetime of explosive target shrapnel",
         onPurchase: function () {
           explosiveLifetimeMult *= 2;
-        }
-      },
-
-      // dark
-      {
-        id: "unlock dark target",
-        title: "Unlock Dark Target",
-        unlocked: false,
-        level: 0,
-        maxLevel: 1,
-        price: 500,
-        x: undefined,
-        y: undefined,
-        detail: null,
-        onPurchase: function () {
-          darkTargetUnlocked = true;
-          unlockShopItems("more dark targets", "double dark target drops", "unlock gold target");
-          shopItems.splice(shopItems.indexOf(this), 1);
-        }
-      },
-      {
-        id: "more dark targets",
-        title: "20% More Dark Targets",
-        unlocked: false,
-        level: 0,
-        maxLevel: 10,
-        price: 400,
-        x: undefined,
-        y: undefined,
-        detail: null,
-        onPurchase: function () {
-          this.price = Math.round(this.price * 1.2);
-          darkTargetChance *= 1.2;
-
-          if (this.level == this.maxLevel) {
-            this.title = "More Dark Targets";
-          }
-        }
-      },
-      {
-        id: "double dark target drops",
-        title: "2x Dark Target Drops",
-        unlocked: false,
-        level: 0,
-        maxLevel: 2,
-        price: 1500,
-        x: undefined,
-        y: undefined,
-        detail: `x${darkTargetConfettiMult}`,
-        unlocked: false,
-        onPurchase: function () {
-          darkTargetConfettiMult *= 2;
-          this.price *= 2;
-          this.detail = `x${darkTargetConfettiMult}`;
-
-          if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `x${darkTargetConfettiMult} Dark Target Drops`;
-          }
         }
       },
 
@@ -471,10 +656,12 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Gold\" targets may appear",
+        stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           goldTargetUnlocked = true;
-          unlockShopItems("more gold targets", "double gold target drop", "easy collect gold");
+          spawnTarget(null, null, "gold");
+          unlockItems(shopItems, "more gold targets", "double gold target drop", "easy collect gold");
           shopItems.splice(shopItems.indexOf(this), 1);
         }
       },
@@ -487,14 +674,18 @@
         price: 500,
         x: undefined,
         y: undefined,
-        detail: goldTargetDrop,
+        tooltip: "Increase the spawn rate of dark targets",
         onPurchase: function () {
           this.price = Math.round(this.price * 1.2);
           goldTargetChance *= 1.2;
 
+          this.tooltip = "Increase the spawn rate of dark targets";
+
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = "More Gold Targets";
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -507,15 +698,17 @@
         price: 5000,
         x: undefined,
         y: undefined,
-        detail: goldTargetDrop,
+        tooltip: "Double the number of high-value drops from gold targets",
         onPurchase: function () {
           goldTargetDrop *= 2;
           this.price *= 5;
-          this.detail = goldTargetDrop;
+          this.tooltip = "Double the number of high-value drops from gold targets";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${goldTargetDrop} Gold Target Drops`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -528,9 +721,10 @@
         price: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Gold targets only require a single touch to fully collect",
         onPurchase: function () {
           goldAutoCollect = true;
+          world.areas["main"].autoTargets = [];
         }
       },
 
@@ -544,24 +738,23 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: `x${specialTargetRateMult}`,
+        tooltip: "Double the rate at which each special target can appear",
         onPurchase: function () {
-          if (this.level == 1) {
-            unlockShopItems("double explosive time");
-          }
-
           this.price *= 10;
           specialTargetRateMult *= 2;
-          this.detail = `x${specialTargetRateMult}`;
+
+          this.tooltip = "Double the rate at which each special target can appear";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `x${specialTargetRateMult} Special Target Rate`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
       {
-        id: "max special drops",
+        id: "max special targets",
         title: "+1 Max Special Targets",
         unlocked: false,
         level: 0,
@@ -569,20 +762,24 @@
         price: 1000,
         x: undefined,
         y: undefined,
-        detail: maxSpecialTargets,
+        tooltip: "More special targets may be present at once",
         onPurchase: function () {
           this.price = Math.round(this.price * 1.2);
           maxSpecialTargets += 1;
-          this.detail = maxSpecialTargets;
+
+          this.tooltip = "More special targets may be present at once";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `${maxSpecialTargets} Max Special Targets`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
 
-      // advanced
+      //#region advanced upgrades
       {
         id: "double points",
         title: "x2 Points",
@@ -593,16 +790,19 @@
         seedPrice: 1000,
         x: undefined,
         y: undefined,
-        detail: `x${pointsMult}`,
+        tooltip: "Double the value of drops",
         onPurchase: function () {
           this.price += 200000 * this.level;
           this.seedPrice += 3000 * this.level;
           pointsMult *= 2;
-          if (this.level < this.maxLevel) {
-            this.detail = `x${pointsMult}`;
-          } else {
-            this.detail = null;
+
+          this.tooltip = "Double the value of drops";
+          
+          if (this.level == this.maxLevel) {
             this.title = `x${pointsMult} Points`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -616,28 +816,35 @@
         seedPrice: 10000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "A permanant little buddy collects stuff in the main area",
         onPurchase: function () {
-          const signX = Math.sign(Math.random() - .5) || 1;
-          const signY = Math.sign(Math.random() - .5) || 1;
-
-          particles.push({
+          settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
+          
+          world.areas["main"].particles.push({
             x: Math.random() * canvas.width,
             y: Math.random() * canvas.height,
-            xVelocity: signX * turtleSpeed,
-            yVelocity: signY * turtleSpeed,
+            xVelocity: turtleSpeed * randomSign(),
+            yVelocity: turtleSpeed * randomSign(),
             friction: 0,
             lifespan: Infinity,
+            wallBounce: true,
             color: "green",
             isCollector: true,
+            movementIsCrucial: true,
             size: 16,
+            maxSpeed: turtleSpeed,
           });
 
+          this.tooltip = "A permanant little buddy collects stuff in the main area";
+          
           this.price *= 5;
           this.seedPrice *= 3;
 
           if (this.level == this.maxLevel) {
             this.title = `${this.maxLevel} Turtles`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -650,16 +857,19 @@
         price: 250,
         x: undefined,
         y: undefined,
+        tooltip: "Open doors into the garden\n\nUnlock currency (seeds)",
+        stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
-          gardenIsUnlocked = true;
-          sceneDoors["garden"] = "farmers market";
-          this.title = "Garden Unlocked"
+          world.areas["garden"].unlocked = true;
+          world.areas["farmers market"].unlocked = true;
+          shopItems.splice(shopItems.indexOf(this), 1);
         }
       }
+      //#endregion
     ];
 
     let farmersMarketItems = [
-      // plot upgrades
+      //#region plot upgrades
       {
         id: "garden plot",
         title: "+1 Garden Plot",
@@ -670,36 +880,40 @@
         seedPrice: 0,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Add a plot to the garden\n\n(i) Each plot provides space for 5 rows",
         onPurchase: function () {
           gardenPlots.push({
             x: null, y: null,
-            isWet: rainDuration ? true : false,
-            wetLifespan: Math.trunc(Math.random() * wetRandRange + minWetLifespan),
-            isFertile: false,
+            wetness: rainDuration > 0 ? Math.trunc(Math.random() * wetRandRange + minWetness) : 0,
+            fertility: 0,
             strips: [],
           });
-          this.price = 15000 * this.level;
+
+          this.price = Math.round(2500 * this.level ** 1.6);
           this.seedPrice = 100 * this.level;
+          const farmersMarketItems = world.areas["farmers market"].items;
 
-          if (this.level == 1) {
-            unlockFarmersMarketItems("garden row", "water plot", "enrich plot");
-          }
+          this.tooltip = "Add a plot to the garden\n\n(i) Each plot provides space for 5 rows";
 
-          if (this.level == 5) {
-            unlockFarmersMarketItems("sunlamp", "unlock rain");
-          }
+          if (this.level == 1) unlockItems(farmersMarketItems, "garden row", "water plot", "enrich plot");
 
+          
+          if (this.level == 5) unlockItems(farmersMarketItems, "sunlamp", "unlock rain");
           if (this.level == this.maxLevel) {
             this.title = `${gardenPlots.length} Garden Plots`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
-          
+
           // update the water + enrich upgrades
-          farmersMarketItems.find(e => e.id == "water plot").refresh();
-          farmersMarketItems.find(e => e.id == "enrich plot").refresh();
+          farmersMarketItems.find(item => item.id == "water plot").refresh();
+          farmersMarketItems.find(item => item.id == "enrich plot").refresh();
 
           // update the rows upgrade
-          farmersMarketItems.find(e => e.id == "garden row").maxLevel = gardenPlots.length * 5;
+          const rowUpgrade = farmersMarketItems.find(item => item.id == "garden row");
+          rowUpgrade.maxLevel = gardenPlots.length * 5;
+          rowUpgrade.refresh();
         }
       },
       {
@@ -713,13 +927,17 @@
         x: undefined,
         y: undefined,
         detail: null,
+        tooltip: "Add one row to a garden plot\n\n(i) Rows designate space to grow crops repeatedly",
         onPurchase: function () {
-          if (this.level == 1) {
-            unlockFarmersMarketItems("crop harvest", "rabbit");
+          this.price = Math.round(500 * this.level ** 1.5);
+          this.seedPrice = 20 * this.level;
+
+          let gardenStripCount = 0;
+          for (let i = 0; i < gardenPlots.length; i++) {
+            gardenStripCount += gardenPlots[i].strips.length;
           }
 
-          gardenStrips += 1;
-          gardenPlots[Math.floor((gardenStrips - 1) / 5)].strips.push([{
+          gardenPlots[Math.floor(gardenStripCount / 5)].strips.push([{
             x: null, y: null,
             growth: 0,
             confetti: 2 + Math.round(Math.random()),
@@ -740,57 +958,60 @@
             growth: 0,
             confetti: 2 + Math.round(Math.random()),
           },]);
-          this.price = 2500 * this.level;
-          this.seedPrice = 20 * this.level;
-          this.detail = gardenStrips;
 
+          if (this.level == 1) {
+            unlockItems(world.areas["farmers market"].items, "crop harvest", "rabbit");
+          }
+
+          this.refresh();
+        },
+        refresh: function() {
+          this.tooltip = "Add one row to a garden plot\n\n(i) Rows designate space to grow crops repeatedly";
           if (this.level == this.maxLevel) {
-            this.detail = null;
-            this.title = `${gardenStrips} Garden Rows`;
+            this.title = `${gardenPlots.length * 5} Garden Rows`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.title = "+1 Garden Row";
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
-
       {
         id: "water plot",
         title: "Water 1 Plot",
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 2000,
-        seedPrice: 10,
+        price: 200,
+        seedPrice: 0,
         x: undefined,
         y: undefined,
-        detail: null,
-        purchasedBefore: true,
+        tooltip: "Watered plots dry up rather quickly, but increase crop growth",
         onPurchase: function () {
+          this.purchasedBefore = true;
           for (let i = 0; i < gardenPlots.length; i++) {
             const plot = gardenPlots[i];
-            if (plot.isWet) continue;
-            plot.isWet = true;
-            plot.wetLifespan = Math.trunc(Math.random() * wetRandRange + minWetLifespan);
-            break;
+            if (plot.wetness < 1) {
+              plot.wetness = Math.trunc(Math.random() * wetRandRange + minWetness);
+              break;
+            };
           }
-
-          this.price = 2000 * this.level;
-          this.seedPrice = 200 * this.level;
-          this.purchasedBefore = false;
-
-          if (this.level == this.maxLevel) {
-            this.title = "All Plots Watered";
-          }
+          this.refresh();
         },
-        refresh: function() {
+        refresh: function () {
           this.maxLevel = gardenPlots.length;
-          this.level = gardenPlots.filter(plot => plot.isWet).length;
-          this.price = 2000 * this.level;
-          this.seedPrice = 200 * this.level;
-          
+          this.level = gardenPlots.filter(plot => plot.wetness).length;
+          this.price = this.purchasedBefore ? 1000 + 2000 * this.level : 200;
+          this.seedPrice = this.purchasedBefore ? 10 + 7 * this.level : 0;
+
+          this.tooltip = "Watered plots dry up rather quickly, but increase crop growth";
+
           if (this.level == this.maxLevel) {
             this.title = "All Plots Watered";
           } else {
             this.title = "Water 1 Plot";
-          }
+          }            
+          this.tooltip += `\n\n${this.level}/${this.maxLevel}`;
         },
       },
       {
@@ -799,42 +1020,41 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 5000,
-        seedPrice: 10,
+        price: 3000,
+        seedPrice: 20,
         x: undefined,
         y: undefined,
-        detail: null,
-        purchasedBefore: true,
+        tooltip: "Fertile plots increase crop growth for a number of harvests, but eventually run out",
         onPurchase: function () {
+          this.purchasedBefore = true;
           for (let i = 0; i < gardenPlots.length; i++) {
             const plot = gardenPlots[i];
-            if (plot.isFertile) continue;
-            plot.isFertile = true;
-            break;
+            if (!plot.fertility) {
+              plot.fertility = fertilizerAmount;
+              break;
+            }
           }
-          this.price = 5000 * this.level;
-          this.seedPrice = 200 * this.level;
-          this.purchasedBefore = false;
-
-          if (this.level == this.maxLevel) {
-            this.title = "All Plots Enriched";
-          }
+          this.refresh();
         },
         refresh: function () {
           this.maxLevel = gardenPlots.length;
-          this.level = gardenPlots.filter(plot => plot.isWet).length;
-          this.price = 5000 * this.level;
-          this.seedPrice = 200 * this.level;
+          this.level = gardenPlots.filter(plot => plot.fertility).length;
+          this.price = 3000 + 3000 * this.level;
+          this.seedPrice = 20 + 7 * this.level;
+
+          this.tooltip = "Fertile plots increase crop growth for a number of harvests, but eventually run out";
 
           if (this.level == this.maxLevel) {
             this.title = "All Plots Enriched";
           } else {
             this.title = "Enrich 1 Plot";
           }
+          this.tooltip += `\n\n${this.level}/${this.maxLevel}`;
         },
       },
+      //#endregion
 
-      // general upgrades
+      //#region general upgrades
       {
         id: "crop harvest",
         title: "+1 Crop Harvest",
@@ -845,16 +1065,19 @@
         seedPrice: 10,
         x: undefined,
         y: undefined,
-        detail: cropHarvestBonus,
+        tooltip: "Crops produce more drops",
         onPurchase: function () {
           cropHarvestBonus += 1;
-          this.price += 1000 * this.level * 2;
+          this.price = 1000 + 2000 * this.level;
           this.seedPrice *= 2;
-          this.detail = cropHarvestBonus;
+
+          this.tooltip = "Crops produce more drops";
 
           if (this.level == this.maxLevel) {
-            this.detail = null;
             this.title = `+${cropHarvestBonus} Crop Harvest`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
@@ -864,14 +1087,14 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 500000,
-        seedPrice: 5000,
+        price: 200000,
+        seedPrice: 2500,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "Double crop growth",
         onPurchase: function () {
-          sunlampUnlocked = true;
           cropGrowthChance *= 2;
+          this.title = "Sunlamp";
         }
       },
       {
@@ -880,13 +1103,16 @@
         unlocked: false,
         level: 0,
         maxLevel: 1,
-        price: 500000,
-        seedPrice: 5000,
+        price: 200000,
+        seedPrice: 1000,
         x: undefined,
         y: undefined,
-        detail: null,
+        tooltip: "\"Rain\" targets may appear in the garden",
+        stroke: "hsl(47, 100%, 50%)",
         onPurchase: function () {
           rainUnlocked = true;
+          spawnTarget(null, null, "rain");
+          unlockItems(settingsItems, "show rain");
         }
       },
       {
@@ -895,124 +1121,672 @@
         unlocked: false,
         level: 0,
         maxLevel: 3,
-        price: 5000,
-        seedPrice: 250,
+        price: 500,
+        seedPrice: 30,
         x: undefined,
         y: undefined,
-        detail: cropHarvestBonus,
+        tooltip: "A permanant little buddy collects stuff in the garden",
         onPurchase: function () {
-          const signX = Math.sign(Math.random() - .5) || 1;
-          const signY = Math.sign(Math.random() - .5) || 1;
+          settingsItems.find(e => e.id == "shuffle buddies").unlocked = true;
 
-          gardenParticles.push({
+          world.areas["garden"].particles.push({
             x: Math.random() * canvas.width,
             y: Math.random() * canvas.height,
-            xVelocity: signX * rabbitSpeed,
-            yVelocity: signY * rabbitSpeed,
+            xVelocity: rabbitSpeed * randomSign(),
+            yVelocity: rabbitSpeed * randomSign(),
             friction: 0,
             lifespan: Infinity,
+            wallBounce: true,
             color: "white",
-            stroke: "gray",
+            stroke: "rgba(0, 0, 0, .07)",
+            strokeSize: 5,
             isCollector: true,
+            movementIsCrucial: true,
             size: 16,
+            maxSpeed: rabbitSpeed,
           });
-          this.price *= 5;
-          this.seedPrice *= 3;
+          this.price *= 20;
+          this.seedPrice *= 10;
+
+          this.tooltip = "A permanant little buddy collects stuff in the garden";
 
           if (this.level == this.maxLevel) {
             this.title = `${this.level} Rabbits`;
+            this.tooltip += `\n\nLevel: ${this.level}`;
+          } else {
+            this.tooltip += `\n\nLevel: ${this.level}/${this.maxLevel}`;
           }
         }
       },
+      //#endregion
     ];
 
-    //#region collisions
-    const doCollisions = (collider, mode) => {
-      if (mode == "main") {
-        for (let i = 0; i < targets.length; i++) {
-          const target = targets[i];
-          if (rectsDoCollide(collider, target)) collectTarget(target);
-        }
+    
+    let settingsItems = [
+      {
+        id: "allow touch controls",
+        title: "Touch Controller",
+        unlocked: userHasTouchScreen,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether or not the touch controller is displayed\n\n(i) Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\nENABLED",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
 
-        for (let i = 0; i < specialTargets.length; i++) {
-          const target = specialTargets[i];
-          if (rectsDoCollide(collider, target)) collectSpecialTarget(target);
+          if (this.enabled) {
+            unlockItems(settingsItems, "controller size", "use joystick");
+          } else {
+            lockItems(settingsItems, "controller size", "use joystick");
+          }
+
+          // external impact
+          if (settingsItems.find(e=>e.id == "use joystick").enabled) {
+            document.getElementById("joystick-area").style.display = this.enabled ? "block" : "none";
+          } else {
+            document.getElementById("touch-arrow-controller").style.display = this.enabled ? "grid" : "none";
+          }
+          useTouchController = this.enabled;
+
+          // item update
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether or not the touch controller is displayed\n\n(i) Alternative movement uses keyboard (arrow keys/WASD) or joystick\n\nPerformance impact: miniscule\n\n${this.enabled ? "ENABLED" : "DISABLED"}`;
         }
-      } else if (mode == "shop") {
-        shopFocus = undefined;
-        for (let i = 0; i < shopItems.length; i++) {
-          const item = shopItems[i];
-          if (purchaseIsValid(item) && rectsDoCollide(collider, { ...item, size: shopButtonSize })) {
-            shopFocus = item;
-            break;
+      },
+      {
+        id: "controller size",
+        title: "Controller Size",
+        unlocked: userHasTouchScreen,
+        level: 1,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine the size of the touch controller\n\nPerformance impact: none\n\nMEDIUM",
+        color: "gold",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 3;
+
+          touchControllerSize = [
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 3}, 
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 2}, 
+            ()=>{return Math.min(window.innerWidth, window.innerHeight) / 1.3}
+          ][this.level];
+
+          updateTouchControllers(touchControllerSize());
+
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine the size of the touch controller\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE"][this.level]}`;
+        }
+      },
+      {
+        id: "use joystick",
+        title: "Use Joystick",
+        unlocked: userHasTouchScreen,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether the touch controller uses joystick or arrow inputs\n\nPerformance impact: none\n\nJOYSTICK",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+
+          useTouchJoystick = this.enabled;
+          const joystick = document.getElementById("joystick-area");
+          if (useTouchJoystick) {
+            unlockItems(settingsItems, "joystick area");
+            lockItems(settingsItems, "lock controller");
+            joystick.style.display = "block";
+          } else {
+            lockItems(settingsItems, "joystick area");
+            unlockItems(settingsItems, "lock controller");
+            joystick.style.display = "none";
+          }
+          updateTouchControllers(touchControllerSize());
+
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether the touch controller uses joystick or arrow inputs\n\nPerformance impact: none\n\n${this.enabled ? "JOYSTICK" : "ARROWS"}`;
+        }
+      },
+      {
+        id: "joystick area",
+        title: "Joystick Area",
+        unlocked: userHasTouchScreen,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine which side of the screen the joystick control is used on\n\nPerformance impact: none\n\nLEFT",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+
+          const joystick = document.getElementById("joystick-area");
+          if (this.enabled) {
+            joystick.style.left = "0px";
+            joystick.style.right = null;
+          } else {
+            joystick.style.left = null;
+            joystick.style.right = "0px";
+          }
+
+          // display effect
+          const duration = 900;
+          joystick.style.transitionDuration = "0ms";
+          joystick.style.backgroundColor = "rgba(0, 0, 0, 0.54)";
+          setTimeout(()=>joystick.style.transitionDuration = `${duration}ms`, 0);
+          setTimeout(()=>joystick.style.backgroundColor = "rgba(0, 0, 0, 0)", 0); 
+
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine which side of the screen the joystick control is used on\n\nPerformance impact: none\n\n${this.enabled ? "LEFT" : "RIGHT"}`;
+        }
+      },
+      {
+        id: "lock controller",
+        title: "Lock Controller",
+        unlocked: false,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether the arrow controller can be moved\n\nPerformance impact: none\n\nUNLOCKED",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          document.getElementById("adjust-controller").style.display = this.enabled ? "grid" : "none";
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether the arrow controller can be moved\n\nPerformance impact: none\n\n${this.enabled ? "UNLOCKED" : "LOCKED"}`;
+        }
+      },
+      {
+        id: "show version",
+        title: "Show Version Code",
+        unlocked: true,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: "Determine whether the game version shows in the corner\n\nPerformance impact: miniscule\n\nSHOWN",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          showVersionCode = this.enabled;
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether the game version shows in the corner\n\nPerformance impact: miniscule\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
+        }
+      },
+      {
+        id: "show currency",
+        title: "Show Currency",
+        unlocked: true,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        detail: "shown",
+        tooltip: "Determine whether game currencies are actively displayed on screen\n\nPerformance impact: miniscule\n\nSHOWN",
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          showCurrency = this.enabled;
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether game currencies are actively displayed on screen\n\nPerformance impact: miniscule\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
+        }
+      },
+      {
+        id: "show drops",
+        title: "Show Drops",
+        unlocked: true,
+        level: 2,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\nSHOWN`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 3;
+
+          showDrops = this.level;
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine whether normal target drops are rendered\n\nPerformance impact: medium\n\n${["NONE", "SOME", "ALL"][this.level]}`;
+
+          if (showDrops) {
+            unlockItems(settingsItems, "drop time");
+          } else {
+            lockItems(settingsItems, "drop time");
           }
         }
-      } else if (mode == "garden") {
+      },
+      {
+        id: "drop time",
+        title: "Drop Collect Speed",
+        unlocked: true,
+        level: 1,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine how quickly most drops disappear\n\nPerformance impact: medium\n\nMEDIUM`,
+        color: "orange",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 4;
+          normalParticleTime = [2, 1, .25, .1][this.level];
+          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine how quickly most drops disappear\n\nPerformance impact: medium\n\n${["SLOW", "MEDIUM", "FAST", "REALLY FAST"][this.level]}`;
+        }
+      },
+      {
+        id: "show particles",
+        title: "Show Particles",
+        unlocked: true,
+        level: 2,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\nALL`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 3;
+
+          showCosmeticParticles = this.level;
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine whether cosmetic particles are rendered\n\nPerformance impact: medium\n\n${["NONE", "SOME", "ALL"][this.level]}`;
+        }
+      },
+      {
+        id: "show targets",
+        title: "Show Targets",
+        unlocked: true,
+        level: 3,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine which targets to render\n\nPerformance impact: low-medium\n\nALL`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 4;
+
+          showNormalTargets = [false, true, false, true][this.level];
+          showSpecialTargets = [false, false, true, true][this.level];
+
+          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine which targets to render\n\nPerformance impact: low-medium\n\n${["NONE", "ONLY NORMAL TARGETS", "ONLY SPECIAL TARGETS", "ALL"][this.level]}`;
+        }
+      },
+      {
+        id: "target limit",
+        title: "Limit Targets",
+        unlocked: true,
+        enabled: false,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n(i) For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\nNORMAL`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          strictTargetAmountLimit = this.enabled;
+          this.color = this.enabled ? "rgb(200, 0, 0)" : "rgb(0, 200, 0)";
+          this.tooltip = `Determine if the normal target count is allowed to overflow its maximum (ie. due to dark targets)\n\n(i) For balancing, this option reduces dark target spawns when enabled\n\nPerformance improvement when strict: low-high\n\n${this.enabled ? "STRICT" : "NORMAL"}`;
+        }
+      },
+      {
+        id: "show doors",
+        title: "Show Doorways",
+        unlocked: true,
+        level: 3,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine how doorways should be displayed\n\nPerformance impact: miniscule\n\nLABELS & DOORWAYS`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 4;
+
+          if (this.level == 0) {
+            showDoorway = false;
+            showDoorLabel = false;
+          } else if (this.level == 1) {
+            showDoorway = true;
+            showDoorLabel = false;
+          } else if (this.level == 2) {
+            showDoorway = false;
+            showDoorLabel = true;
+          } else if (this.level == 3) {
+            showDoorway = true;
+            showDoorLabel = true;
+          }
+
+          this.color = ["rgb(200, 0, 0)", "orange", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Determine how doorways should be displayed\n\nPerformance impact: miniscule\n\n${["NONE", "DOORWAYS", "LABELS", "LABELS & DOORWAYS"][this.level]}`;
+        }
+      },
+      {
+        id: "door size",
+        title: "Door Size",
+        unlocked: true,
+        level: 1,
+        x: undefined,
+        y: undefined,
+        tooltip: `Change the physical size of doors\n\nPerformance impact: none\n\nMEDIUM`,
+        color: "gold",
+        onPurchase: function () {
+          this.level = (this.level + 1) % 3;
+
+          doorSize = [40, 70, 100][this.level];
+
+          this.color = ["rgb(200, 0, 0)", "gold", "rgb(0, 200, 0)"][this.level];
+          this.tooltip = `Change the physical size of doors\n\nPerformance impact: none\n\n${["SMALL", "MEDIUM", "LARGE"][this.level]}`;
+        }
+      },
+      {
+        id: "show rain",
+        title: "Show Rain",
+        unlocked: false,
+        enabled: true,
+        x: undefined,
+        y: undefined,
+        tooltip: `Determine whether cosmetic rain particles appear in the garden during rain events\n\nPerformance impact: low\n\nSHOWN`,
+        color: "rgb(0, 200, 0)",
+        onPurchase: function () {
+          this.enabled = !this.enabled;
+          showRain = this.enabled;
+          this.color = this.enabled ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)";
+          this.tooltip = `Determine whether cosmetic rain particles appear in the garden during rain events\n\nPerformance impact: low\n\n${this.enabled ? "SHOWN" : "HIDDEN"}`;
+        }
+      },
+      {
+        id: "shuffle buddies",
+        title: "Shuffle Buddies",
+        unlocked: false,
+        x: undefined,
+        y: undefined,
+        tooltip: `Instantly scramble the positions of all rabbits and turtles\n\n(i) Use if they have poor positioning`,
+        color: "rgb(0, 200, 0)",
+        debounce: false,
+        onPurchase: function () {
+          if (this.debounce) return;
+
+          for (let i = 0; i < Object.keys(world.areas).length; i++) {
+            const area = world.areas[Object.keys(world.areas)[i]];
+            
+            if (!area.particles) continue;
+            for (let j = 0; j < area.particles.length; j++) {
+              const particle = area.particles[j];
+
+              if (isFinite(particle.lifespan) || !particle.isCollector) continue;
+              
+              particle.xVelocity = particle.maxSpeed * randomSign();
+              particle.yVelocity = particle.maxSpeed * randomSign();
+
+              particle.x = Math.trunc(Math.random() * canvas.width);
+              particle.y = Math.trunc(Math.random() * canvas.height);
+            } 
+          }
+
+          this.debounce = true;
+          this.color = "rgb(200, 0, 0)";
+          setTimeout(() => {
+            this.debounce = false;
+            this.color = "rgb(0, 200, 0)";
+          }, 300);
+        }
+      },
+    ];
+    
+    const world = {
+      scene: "main",
+      areas: {
+        "main": new Area([new Door("right", "garden"), new Door("left", "garden"), new Door("bottom", "shop")], [], [], null, "white", true),
+        "shop": new Area([new Door("right", "farmers market"), new Door("left", "farmers market"), new Door("top", "main"), new Door("top", "settings", .8)], [], null, shopItems, "rgb(240, 225, 200)", true),
+        "garden": new Area([new Door("right", "main"), new Door("left", "main"), new Door("bottom", "farmers market")], [], [], null, "rgb(200, 255, 200)"),
+        "farmers market": new Area([new Door("right", "shop"), new Door("left", "shop"), new Door("top", "garden"), new Door("top", "settings", .2)], [], null, farmersMarketItems, "rgb(200, 255, 200)"),
+        "settings": new Area([new Door("bottom", "farmers market", .2), new Door("bottom", "shop", .8)], [], null, settingsItems, "white", true),
+      },
+    }
+    world.areas["main"].specialTargets = [];
+    world.areas["garden"].specialTargets = [];
+    
+    //#region collisions
+    const doCollisions = (collider, area) => {
+      if (area.targets) {
+        for (let i = 0; i < area.targets.length; i++) {
+          const target = area.targets[i];
+          if (rectsDoCollide(collider, target)) collectTarget(target);
+        }
+      }
+      if (area.specialTargets) {
+        for (let i = 0; i < area.specialTargets.length; i++) {
+          const target = area.specialTargets[i];
+          if (rectsDoCollide(collider, target)) collectTarget(target);
+        }
+      }
+
+      // garden collisions (crop targets are organized differently data-wise)
+      if (area == world.areas["garden"]) {
         for (let i = 0; i < gardenPlots.length; i++) {
           const plot = gardenPlots[i];
-
           for (let j = 0; j < plot.strips.length; j++) {
             const strip = plot.strips[j];
-
             for (let k = 0; k < strip.length; k++) {
               const crop = strip[k];
 
-              if (crop.growth >= 1 && rectsDoCollide(collider, { x: crop.x, y: crop.y, size: maxCropSize })) harvestCrop(crop);
+              if (crop.growth >= 1 && rectsDoCollide(collider, { x: crop.x, y: crop.y, size: maxCropSize })) {
+                harvestCrop(crop);
+                // if not zero, -1, then, if zero, update shop item
+                if (plot.fertility && !--plot.fertility) farmersMarketItems.find(e => e.id == "enrich plot").refresh();
+              }
             }
           }
         }
-        for (let i = 0; i < gardenTargets.length; i++) {
-          const target = gardenTargets[i];
-          
-          if (rectsDoCollide(collider, target)) collectGardenTarget(target);
-        }
-      } else if (mode == "farmers market") {
+      }
+    }
+
+    const doItemCollisions = () => {
+      const area = world.areas[scene];
+      
+      let didCollideItem = false;
+      if (area.items) {
         shopFocus = undefined;
-        for (let i = 0; i < farmersMarketItems.length; i++) {
-          const item = farmersMarketItems[i];
-          const purchaseIsValid = item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true) && item.level < item.maxLevel;
-          if (purchaseIsValid && rectsDoCollide(collider, { ...item, size: shopButtonSize })) {
-            shopFocus = item;
+        
+        for (let i = 0; i < area.items.length; i++) {
+          const item = area.items[i];
+          
+          if (rectsDoCollide(player, { ...item, size: itemButtonSize })) {
+            didCollideItem = true;
+            showTooltip(item);            
+            if (purchaseIsValid(item)) shopFocus = item;
             break;
           }
         }
       }
+      if (!didCollideItem) hideTooltip();
     }
 
     const rectsDoCollide = (rect1, rect2) => {
       const r1Half = rect1.size / 2;
-      const r1 = {
-        top: rect1.y - r1Half,
-        bottom: +rect1.y + r1Half,
-        right: +rect1.x + r1Half,
-        left: rect1.x - r1Half,
-      }
-
+      const r1Top = rect1.y - r1Half;
+      const r1Bottom = rect1.y + r1Half;
+      const r1Left = rect1.x - r1Half;
+      const r1Right = rect1.x + r1Half;
+      
       const r2Half = rect2.size / 2;
-      const r2 = {
-        top: rect2.y - r2Half,
-        bottom: +rect2.y + r2Half,
-        right: +rect2.x + r2Half,
-        left: rect2.x - r2Half,
-      }
+      const r2Top = rect2.y - r2Half;
+      const r2Bottom = rect2.y + r2Half;
+      const r2Left = rect2.x - r2Half;
+      const r2Right = rect2.x + r2Half;
 
-      const xCollision = r1.left < r2.right && r1.left > r2.left || r1.right > r2.left && r1.right < r2.right;
-      const yCollision = r1.top < r2.bottom && r1.top > r2.top || r1.bottom > r2.top && r1.bottom < r2.bottom;
-
-      return xCollision && yCollision;
-    }
+      return (
+        r1Left < r2Right &&
+        r1Right > r2Left &&
+        r1Top < r2Bottom &&
+        r1Bottom > r2Top
+      );
+    };
     //#endregion
 
     //#region player
     const setupPlayerControls = () => {
+      document.body.addEventListener("contextmenu", e => e.preventDefault());
+
+      setupKeyboardControls();
+
+      addTouchListeners();
+      updateTouchControllers(touchControllerSize());
+      document.getElementById("joystick-area").style.left = "0px";
+    }
+
+    const setupKeyboardControls = () => {
       window.addEventListener("keydown", (event) => {
-        keys[event.key.toLowerCase()] = true;
+        const key = event.key.toLowerCase();
+        
+        // set controller
+        if (key == "w" || key == "arrowup") controller.up = true;
+        if (key == "a" || key == "arrowleft") controller.left = true;
+        if (key == "s" || key == "arrowdown") controller.down = true;
+        if (key == "d" || key == "arrowright") controller.right = true;
+        if (key == "e" || key == " ") controller.interact = true;
       });
+      window.addEventListener("mousedown", e => controller.interact = true);
+      window.addEventListener("mouseup", e => controller.interact = false);
+      canvas.addEventListener("touchstart", e => controller.interact = true);
+      window.addEventListener("touchend", e => controller.interact = false);
+      window.addEventListener("touchcancel", e => controller.interact = false);
 
       window.addEventListener("keyup", (event) => {
-        keys[event.key.toLowerCase()] = false;
+        const key = event.key.toLowerCase();
+
+        // set controller
+        if (key == "w" || key == "arrowup") controller.up = false;
+        if (key == "a" || key == "arrowleft") controller.left = false;
+        if (key == "s" || key == "arrowdown") controller.down = false;
+        if (key == "d" || key == "arrowright") controller.right = false;
+        if (key == "e" || key == " ") controller.interact = false;
       });
     }
+
+    const updateTouchControllers = (controllerSize) => {
+      if (!useTouchController) return;
+      const arrowControl = document.getElementById("touch-arrow-controller");
+      
+      if (!userHasTouchScreen || useTouchJoystick) {
+        const joystickControl = document.getElementById("joystick-area");
+        arrowControl.style.display = "none";
+        joystickControl.style.display = "block";
+        
+        const socket = document.getElementById("joystick-socket");
+        socket.style.width = controllerSize / 2;
+        socket.style.height = controllerSize / 2;
+      } else {
+        // resize
+        const fontSize = controllerSize / 12;
+        arrowControl.style.display = userHasTouchScreen ? "grid" : "none";
+        arrowControl.style.gap = controllerSize / 50 + "px";
+        arrowControl.style.height = controllerSize + "px";
+        arrowControl.style.width = controllerSize + "px";
+        arrowControl.style.fontSize = fontSize + "px";
+  
+        // reposition
+        arrowControl.style.left = canvas.getBoundingClientRect().left + "px";
+        arrowControl.style.bottom = window.innerHeight - canvas.getBoundingClientRect().height + "px";
+      }
+      
+      // refresh event listeners
+      removeTouchListeners();
+      addTouchListeners();
+    }
+
+    //#region event listeners
+    const removeTouchListeners = () => {
+      const arrowController = document.getElementById("touch-arrow-controller");
+      const adjustmentControl = document.getElementById("adjust-controller");
+      
+      adjustmentControl.removeEventListener("touchmove", adjustController);
+      adjustmentControl.removeEventListener("touchend", putControllerBack);
+      adjustmentControl.removeEventListener("touchcancel", putControllerBack);
+      
+      ["up", "left", "right", "down"].forEach(direction => {
+        const control = arrowController.children[direction];
+        control.removeEventListener("touchstart", e => controllerDirectionOn(e, direction));
+        control.removeEventListener("touchend", e => controllerDirectionOff(e, direction));
+        control.removeEventListener("touchcancel", e => controllerDirectionOff(e, direction));
+      })
+
+      const joystick = document.getElementById("joystick-area");
+      joystick.removeEventListener("touchmove", moveTouchJoystick);
+      joystick.removeEventListener("touchend", releaseTouchJoystick);
+      joystick.removeEventListener("touchcancel", releaseTouchJoystick);
+    }
+
+    const addTouchListeners = () => {
+      const arrowController = document.getElementById("touch-arrow-controller");
+      const adjustmentControl = document.getElementById("adjust-controller");
+
+      adjustmentControl.addEventListener("touchmove", adjustController);
+      adjustmentControl.addEventListener("touchend", putControllerBack);
+      adjustmentControl.addEventListener("touchcancel", putControllerBack);
+      
+      ["up", "left", "right", "down"].forEach(direction => {
+        const control = arrowController.children[direction];
+        control.addEventListener("touchstart", e => controllerDirectionOn(e, direction));
+        control.addEventListener("touchend", e => controllerDirectionOff(e, direction));
+        control.addEventListener("touchcancel", e => controllerDirectionOff(e, direction));
+      });
+      
+      const joystick = document.getElementById("joystick-area");
+      joystick.addEventListener("touchmove", moveTouchJoystick);
+      joystick.addEventListener("touchend", releaseTouchJoystick);
+      joystick.addEventListener("touchcancel", releaseTouchJoystick);
+    }
+    
+    const moveTouchJoystick = e => {
+      const touch = e.changedTouches[0];
+      const areaRect = document.getElementById("joystick-area").getBoundingClientRect();
+      const socket = document.getElementById("joystick-socket");
+      const thumb = document.getElementById("joystick-thumb");
+      
+      const touchPoint = new Point(touch.clientX - areaRect.left, touch.clientY);
+      if (!joystickStart) {
+        joystickStart = touchPoint;
+        
+        socket.style.left = joystickStart.x + "px";
+        socket.style.top = joystickStart.y + "px";
+      };
+      
+      const socketRect = socket.getBoundingClientRect();
+      const controllerPoint = new Point(socketRect.x + (socketRect.width / 2) - areaRect.left, socketRect.y + (socketRect.height / 2));
+      
+      const vector = Vector.fromPoints(controllerPoint, touchPoint);
+      vector.magnitude = Math.min(vector.magnitude / socketRect.width, 1);
+      controller.joystick = vector;
+
+      const dx = vector.magnitude * Math.cos(vector.direction);
+      const dy = vector.magnitude * Math.sin(vector.direction);
+
+      // move the joystick thumb
+      socket.style.display = "grid";
+      thumb.style.transform = `translate(${dx * socketRect.width}px, ${dy * socketRect.height}px)`;
+    }
+    const releaseTouchJoystick = e => {
+      controller.joystick = null;
+      joystickStart = null;
+      const thumb = document.getElementById("joystick-thumb");
+      const socket = document.getElementById("joystick-socket");
+      socket.style.display = "none";
+      thumb.style.transform = "translate(0, 0)";
+    }
+
+    const controllerDirectionOn = (e, direction) => {
+      controller[direction] = true;
+    }
+    const controllerDirectionOff = (e, direction) => {
+      controller[direction] = false;
+    }
+    const putControllerBack = e => {
+      const touchController = document.getElementById("touch-arrow-controller");
+      const quarterController = touchControllerSize() / 4;
+      const rect = touchController.getBoundingClientRect();
+
+      if (rect.left < -quarterController || rect.right > window.innerWidth + quarterController || rect.top < -quarterController || rect.bottom > window.innerHeight + quarterController) {
+        updateTouchControllers(touchControllerSize());
+      }
+    }
+    const adjustController = e => {
+      const touch = e.changedTouches[0];
+      const touchController = document.getElementById("touch-arrow-controller");
+      const halfController = touchControllerSize() / 2;
+      touchController.style.left = `${touch.clientX - halfController}px`;
+      touchController.style.top = `${touch.clientY - halfController}px`;
+    }
+    //#endregion
 
     const drawPlayer = () => {
       ctx.fillStyle = player.color;
@@ -1020,257 +1794,383 @@
     }
 
     const movePlayer = deltaT => {
-      let xSign = Math.sign(player.xVelocity);
-      let ySign = Math.sign(player.yVelocity);
+      // Aliases
+      const move = player.movement;
+      const js = controller.joystick;
 
-      const left = keys["a"] || keys["arrowleft"];
-      const right = keys["d"] || keys["arrowright"];
-      const up = keys["w"] || keys["arrowup"];
-      const down = keys["s"] || keys["arrowdown"];
+      // Accelerate
+      let movementMod = player.movement;
+      if (js.magnitude) movementMod = addVectors(movementMod, new Vector(js.magnitude * player.acceleration * deltaT, js.direction));
+      if (controller.up) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, -Math.PI / 2));
+      if (controller.left) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, Math.PI));
+      if (controller.down) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, Math.PI / 2));
+      if (controller.right) movementMod = addVectors(movementMod, new Vector(player.acceleration * deltaT, 0));
 
-      // x momentum
-      if (left || right) {
-        if (left) player.xVelocity = Math.max(player.xVelocity - player.acceleration, -player.maxVelocity);
-        if (right) player.xVelocity = Math.min(player.xVelocity + player.acceleration, player.maxVelocity);
-
-        xSign = Math.sign(player.xVelocity);
+      // save min(prev magnitude & modified direction, new(lower) magnitude & modfied direction). 
+      if (player.movement.magnitude > player.maxSpeed) {
+        player.movement = player.movement.magnitude < movementMod.magnitude ? new Vector(player.movement.magnitude, movementMod.direction) : movementMod;
       } else {
-        if (xSign) player.xVelocity -= player.friction * xSign;
+        player.movement = movementMod;
       }
 
-      // y momentum 
-      if (up || down) {
-        if (up) player.yVelocity = Math.max(player.yVelocity - player.acceleration, -player.maxVelocity);
-        if (down) player.yVelocity = Math.min(player.yVelocity + player.acceleration, player.maxVelocity);
+      // Move
+      player.x += player.movement.magnitude * Math.cos(player.movement.direction) * deltaT;
+      player.y += player.movement.magnitude * Math.sin(player.movement.direction) * deltaT;
 
-        ySign = Math.sign(player.yVelocity);
-      } else {
-        if (ySign) player.yVelocity -= player.friction * ySign;
-      }
-
-      // move
-      player.x += player.xVelocity;
-      player.y += player.yVelocity;
-
-      // keep the player on screen
-      const primaryScenes = Object.keys(sceneDoors);
-      const secondaryScenes = Object.values(sceneDoors);
-      const sceneIsPrimary = secondaryScenes.indexOf(scene) < 0;
-      if (player.x > canvas.width) {
-        if (primaryScenes.length > 1) {
-          const rightScene = sceneIsPrimary ? primaryScenes[(primaryScenes.indexOf(scene) + 1) % primaryScenes.length] : secondaryScenes[(secondaryScenes.indexOf(scene) + 1) % secondaryScenes.length];
-          if (player.y < canvas.height / 2 + doorSize && player.y > canvas.height / 2 - doorSize) {
-            scene = rightScene;
-            player.x = 20;
-          }
+      // Decelerate
+      if (player.movement.magnitude > player.maxSpeed || !(js.magnitude || controller.up || controller.down || controller.left || controller.right)) {
+        if (player.movement.magnitude > 0) {
+          const frictionVector = new Vector(player.friction * deltaT, player.movement.direction);
+          player.movement = subtractVectors(player.movement, frictionVector);
         }
-
-        player.xVelocity -= player.acceleration * 2;
+        
+        // Lower limit
+        if (player.movement.magnitude < 1) {
+          player.movement.magnitude = 0;
+        } 
       }
-      if (player.x < 0) {
-        if (primaryScenes.length > 1) {
-          const leftScene = sceneIsPrimary ? primaryScenes[Math.abs(primaryScenes.indexOf(scene) - 1) % primaryScenes.length] : secondaryScenes[Math.abs(secondaryScenes.indexOf(scene) - 1) % secondaryScenes.length];
-          if (player.y < canvas.height / 2 + doorSize && player.y > canvas.height / 2 - doorSize) {
-            scene = leftScene;
-            player.x = canvas.width - 20;
-          }
-        }
 
-        player.xVelocity += player.acceleration * 2;
-      }
-      if (player.y > canvas.height) {
-        const lowerScene = sceneDoors[scene];
-        if (player.x < canvas.width / 2 + doorSize && player.x > canvas.width / 2 - doorSize && lowerScene) {
-          scene = lowerScene;
-          player.y = 20;
-        }
+      // Clamp player towards play area
+      player.x = Math.max(Math.min(player.x, canvas.width * 2), -canvas.width);
+      player.y = Math.max(Math.min(player.y, canvas.height * 2), -canvas.height);
 
-        player.yVelocity -= player.acceleration * 2;
-      }
-      if (player.y < 0) {
-        const upperScene = primaryScenes.find(key => sceneDoors[key] === scene);
-        if (player.x < canvas.width / 2 + doorSize && player.x > canvas.width / 2 - doorSize && upperScene) {
-          scene = upperScene;
-          player.y = canvas.height - 20;
-        }
-
-        player.yVelocity += player.acceleration * 2;
-      }
+      handleDoorInteractions(deltaT);
     }
     //#endregion
 
+    const handleDoorInteractions = deltaT => {
+      let moveTo;
+
+      if (player.x > canvas.width) {
+        const doors = world.areas[scene].doors.filter(door => door.side == "right" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
+          const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
+
+          if (player.y < doorPosition + doorSize && player.y > doorPosition - doorSize) {
+            scene = door.destination;
+            player.x = 20;
+            break;
+          }
+        }
+
+        moveTo = new Point(player.x - player.maxSpeed * 2 * deltaT, player.y);
+      }
+
+      if (player.x < 0) {
+        const doors = world.areas[scene].doors.filter(door => door.side == "left" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
+          const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
+
+          if (player.y < doorPosition + doorSize && player.y > doorPosition - doorSize) {
+            scene = door.destination;
+            player.x = canvas.width - 20;
+            break;
+          }
+        }
+
+        moveTo = new Point(player.x + player.maxSpeed * 2 * deltaT, player.y);
+      }
+
+      if (player.y > canvas.height) {
+        const doors = world.areas[scene].doors.filter(door => door.side == "bottom" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
+          const doorPosition = door.position ? canvas.width * door.position : canvas.width / 2;
+
+          if (player.x < doorPosition + doorSize && player.x > doorPosition - doorSize) {
+            scene = door.destination;
+            player.y = 20;
+            break;
+          }
+        }
+      
+        moveTo = new Point(player.x, player.y - player.maxSpeed * 2 * deltaT);
+      }
+
+      if (player.y < 0) {
+        const doors = world.areas[scene].doors.filter(door => door.side == "top" && world.areas[door.destination].unlocked);
+        for (let i = 0; i < doors.length; i++) {
+          const door = doors[i];
+          const doorPosition = door.position ? canvas.width * door.position : canvas.width / 2;
+
+          if (player.x < doorPosition + doorSize && player.x > doorPosition - doorSize) {
+            scene = door.destination;
+            player.y = canvas.height - 20;
+            break;
+          }
+        }
+
+        moveTo = new Point(player.x, player.y + player.maxSpeed * 2 * deltaT);
+      }
+
+      // keep the player on screen
+      if (moveTo) {
+        const newVector = Vector.fromPoints(player, moveTo);
+        newVector.magnitude = 2 * player.acceleration;
+        player.movement = addVectors(player.movement, newVector);
+      }
+    }
+
     //#region particles
-    const moveParticles = () => {
-      for (let i = 0; i < particles.length; i++) {
-        const particle = particles[i];
-
-        // keep the particle on screen
-        if (particle.x > canvas.width) particle.xVelocity -= 2;
-        if (particle.y > canvas.height) particle.yVelocity -= 2;
-        if (particle.x < 0) particle.xVelocity += 2;
-        if (particle.y < 0) particle.yVelocity += 2;
-
-        if (particle.xVelocity || particle.yVelocity) {
-          // move
-          particle.x += particle.xVelocity;
-          particle.y += particle.yVelocity;
-
-          // slow down
-          const xSign = Math.sign(particle.xVelocity);
-          const ySign = Math.sign(particle.yVelocity);
-          if (xSign) particle.xVelocity -= particle.friction * xSign;
-          if (ySign) particle.yVelocity -= particle.friction * ySign;
-        }
-
-        if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particleSize }, "main");
-
-        // die off
-        if (--particle.lifespan < 1) {
-          if (particle.onDeath) particle.onDeath();
-          particles.splice(i, 1);
-        }
-      }
-
-      for (let i = 0; i < shopParticles.length; i++) {
-        const particle = shopParticles[i];
-
-        if (particle.xVelocity || particle.yVelocity) {
-          // move
-          particle.x += particle.xVelocity;
-          particle.y += particle.yVelocity;
-
-          // slow down
-          const xSign = Math.sign(particle.xVelocity);
-          const ySign = Math.sign(particle.yVelocity);
-          if (xSign) particle.xVelocity -= particle.friction * xSign;
-          if (ySign) particle.yVelocity -= particle.friction * ySign;
-        }
-
-        // die off
-        if (--particle.lifespan < 1) {
-          if (particle.onDeath) particle.onDeath();
-          shopParticles.splice(i, 1);
-        }
-      }
-
-      for (let i = 0; i < gardenParticles.length; i++) {
-        const particle = gardenParticles[i];
-
-        if (scene != "garden" && particle.isCosmetic) continue;
-
-        // keep the particle on screen
-        if (!particle.ignoreWalls) {
-          if (particle.x > canvas.width) particle.xVelocity = -Math.abs(particle.xVelocity);
-          if (particle.y > canvas.height) particle.yVelocity = -Math.abs(particle.yVelocity);
-          if (particle.x < 0) particle.xVelocity = Math.abs(particle.yVelocity);
-          if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
-        }
+    const moveParticles = deltaT => {
+      deltaT *= gameSpeed;
+      const areaNames = Object.keys(world.areas);
+      for (let i = 0; i < areaNames.length; i++) {
+        const area = world.areas[areaNames[i]];
         
-        if (particle.xVelocity || particle.yVelocity) {
-          // move
-          particle.x += particle.xVelocity;
-          particle.y += particle.yVelocity;
+        for (let j = 0; j < area.particles.length; j++) {
+          const particle = area.particles[j];
 
-          // slow down
-          const xSign = Math.sign(particle.xVelocity);
-          const ySign = Math.sign(particle.yVelocity);
-          if (xSign) particle.xVelocity -= particle.friction * xSign;
-          if (ySign) particle.yVelocity -= particle.friction * ySign;
-        }
+          if (particle.type && particle.type == "rain") {
+            if (!showRain || scene != areaNames[i]) continue;
+          } else if (particle.isCosmetic) {
+            if (!showCosmeticParticles || scene != areaNames[i]) continue;
+          } else {
+            if (!showDrops && isFinite(particle.lifespan) && !particle.movementIsCrucial)  {
+              if (particle.onDeath) particle.onDeath();
+              area.particles.splice(j, 1);
+              continue;
+            }
+          }
+          
+          // keep the particle on screen
+          if (!particle.ignoreWalls) {
+            if (particle.wallBounce) {
+              if (particle.x > canvas.width) particle.xVelocity = -Math.abs(particle.xVelocity);
+              else if (particle.x < 0) particle.xVelocity = Math.abs(particle.xVelocity);
+              if (particle.y > canvas.height) particle.yVelocity = -Math.abs(particle.yVelocity);
+              else if (particle.y < 0) particle.yVelocity = Math.abs(particle.yVelocity);
 
-        if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particle.size ? particle.size : particleSize }, "garden");
+              particle.x = Math.max(Math.min(particle.x, canvas.width), 0);
+              particle.y = Math.max(Math.min(particle.y, canvas.height), 0);
+            } else {
+              if (particle.x > canvas.width) particle.xVelocity -= 2 * deltaT;
+              else if (particle.x < 0) particle.xVelocity += 2 * deltaT;
+              if (particle.y > canvas.height) particle.yVelocity -= 2 * deltaT;
+              else if (particle.y < 0) particle.yVelocity += 2 * deltaT;
+            }
+          }
 
-        // die off
-        if (--particle.lifespan < 1) {
-          if (particle.onDeath) particle.onDeath();
-          gardenParticles.splice(i, 1);
+          if (particle.xVelocity || particle.yVelocity) {
+            // move
+            particle.x += particle.xVelocity * deltaT;
+            particle.y += particle.yVelocity * deltaT;
+
+            // apply friction
+            if (particle.friction) {
+              const xSign = Math.sign(particle.xVelocity);
+              const ySign = Math.sign(particle.yVelocity);
+  
+              const speedChangeX = particle.xVelocity + particle.friction * -xSign * deltaT;
+              if (xSign == 1) {
+                particle.xVelocity = Math.max(speedChangeX, 0);
+              } else if (xSign == -1) {
+                particle.xVelocity = Math.min(speedChangeX, 0);
+              };
+              const speedChangeY = particle.yVelocity + particle.friction * -ySign * deltaT;
+              if (ySign == 1) {
+                particle.yVelocity = Math.max(speedChangeY, 0);
+              } else if (ySign == -1) {
+                particle.yVelocity = Math.min(speedChangeY, 0);
+              };
+            }
+          }
+
+          if (particle.isCollector) doCollisions({ x: particle.x, y: particle.y, size: particleSize }, area);
+
+          // die off
+          particle.lifespan -= deltaT;
+          if (particle.lifespan <= 0) {
+            if (particle.onDeath) particle.onDeath();
+            area.particles.splice(j, 1);
+          }
         }
       }
     }
 
     const drawParticles = () => {
-      let particleArray = particles;
-      if (scene == "shop" || scene == "farmers market") {
-        particleArray = shopParticles;
-      } else if (scene == "garden") {
-        particleArray = gardenParticles;
-      }
-
-      for (let i = 0; i < particleArray.length; i++) {
-        const particle = particleArray[i];
-        ctx.fillStyle = particle.color;
+      const area = world.areas[scene];
+      
+      for (let i = 0; i < area.particles.length; i++) {
+        const particle = area.particles[i];
+        
+        if (particle.type && particle.type == "rain") {
+          if (!showRain) continue;
+        } else if (particle.isCosmetic) {
+          if (!showCosmeticParticles) continue;
+        } else {
+          if (!showDrops && isFinite(particle.lifespan)) continue;
+        }
+        
+        // fadeToTransparent requires hue, saturation, lightness, and maxLifespan
+        if (particle.fadeToTransparent) {
+          ctx.fillStyle = `hsla(${particle.hue}, ${particle.saturation}%, ${particle.lightness}%, ${(particle.startingTransparency || 1) * (particle.lifespan / particle.maxLifespan)})`;
+        } else {
+          if (ctx.fillStyle != particle.color) ctx.fillStyle = particle.color;
+        }
         ctx.fillRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
 
         if (particle.stroke) {
           ctx.lineWidth = particle.strokeSize || 1;
-          ctx.strokeStyle = particle.stroke;
+          if (ctx.strokeStyle != particle.stroke) ctx.strokeStyle = particle.stroke;
           ctx.strokeRect(particle.x - particleSize / 2, particle.y - particleSize / 2, particle.size ? particle.size : particleSize, particle.size ? particle.size : particleSize);
         }
       }
     }
     //#endregion
-
+const spawnTargets = (amt) => { for (let i = 0; i < amt; i++) { spawnTarget() } }
     //#region targets
-    const spawnTarget = (x, y) => {
-      const superPotent = Math.random() < superPotentChance;
-      const potency = superPotent ? superPotentValue : Math.random() * maxNormalPotency;
-      const breadth = Math.random();
+    const spawnTarget = (x, y, type) => {
+      const main = world.areas["main"];
+      const garden = world.areas["garden"];
+      
+      if (!type) {
+        const superPotent = Math.random() < superPotentChance;
+        const potency = superPotent ? superPotentValue : Math.random() * maxNormalPotency;
+        const breadth = Math.random();
+        const confetti = Math.trunc((potency * potencyBonus / 2) + (breadth * (breadthSizeBonus / 4)));
 
-      const newTarget = {
-        x: x ? x : Math.trunc(Math.random() * canvas.width),
-        y: y ? y : Math.trunc(Math.random() * canvas.height),
-        size: Math.trunc(breadth * breadthSizeBonus + minimumTargetSize),
-        color: randoColor(Math.max(potency, .1)),
-        confetti: Math.trunc(potency * potencyBonus / 2 + breadth * breadthBonus / 2),
-      };
+        if (strictTargetAmountLimit && main.targets.length >= maxTargets) {
+          points += (confetti + particleBase) * pointsMult;
+          return;
+        }
+        
+        const newTarget = {
+          x: x ? x : Math.trunc(Math.random() * canvas.width),
+          y: y ? y : Math.trunc(Math.random() * canvas.height),
+          size: Math.trunc(breadth * breadthSizeBonus + minimumTargetSize),
+          color: randomTargetColor(Math.max(potency, .1)),
+          confetti: confetti,
+          type: type,
+          collect: function() {
+            const drops = this.confetti + particleBase;
+            for (let i = 0; i < drops; i++) {
+              if (showDrops == 1 && i % 3 > 0) {
+                points += pointsMult;
+                continue;
+              }
 
-      if (superPotent) newTarget.stroke = "#aaaaaa";
+              main.particles.push({
+                x: this.x,
+                y: this.y,
+                xVelocity: Math.trunc(Math.random() * (drops / 3 + 16) - (drops / 6 + 8)),
+                yVelocity: Math.trunc(Math.random() * (drops / 3 + 16) - (drops / 6 + 8)),
+                friction: 1,
+                lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
+                color: this.color,
+                onDeath: () => { points += pointsMult },
+              });
+            }
+            
+            main.targets.splice(main.targets.indexOf(this), 1);
+          }
+        };
 
-      targets.push(newTarget);
-    }
-
-    const spawnSpecialTarget = type => {
-      if (type == "dark") {
+        if (superPotent) newTarget.stroke = "#ccc";
+        
+        main.targets.push(newTarget);
+        targets.set(newTarget, world.areas.main.targets.length)
+      } else if (type == "dark") {
         const breadth = Math.random();
 
         const newTarget = {
-          x: Math.trunc(Math.random() * canvas.width),
-          y: Math.trunc(Math.random() * canvas.height),
+          x: x ? x : Math.trunc(Math.random() * canvas.width),
+          y: y ? y : Math.trunc(Math.random() * canvas.height),
           size: Math.trunc(breadth * 40 + 40),
           color: "black",
           stroke: "white",
           strokeSize: 2,
-          confetti: Math.trunc(breadth * breadthBonus + 20 * darkTargetConfettiMult),
+          confetti: Math.trunc(breadth * (breadthSizeBonus / 4)),
           type: type,
+          collect: function() {
+            const maxVelo = 25 + darkTargetConfettiMult * 2;
+            for (let i = 0; i < this.confetti + 20 * darkTargetConfettiMult; i++) {
+              // spawn particles that become new generic targets
+              main.particles.push({
+                x: this.x,
+                y: this.y,
+                xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+                yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+                friction: 1,
+                lifespan: Math.trunc((2 + Math.random()) / 2 * FPS),
+                color: this.color,
+                movementIsCrucial: true,
+                onDeath: function () { spawnTarget(this.x, this.y) },
+              });
+            }
+
+            main.specialTargets.splice(main.specialTargets.indexOf(this), 1);
+          }
         };
 
-        specialTargets.push(newTarget);
+        main.specialTargets.push(newTarget);
       } else if (type == "explosive") {
         const newTarget = {
-          x: Math.trunc(Math.random() * canvas.width),
-          y: Math.trunc(Math.random() * canvas.height),
+          x: x ? x : Math.trunc(Math.random() * canvas.width),
+          y: y ? y : Math.trunc(Math.random() * canvas.height),
           size: 16,
           color: "red",
           stroke: "maroon",
           strokeSize: 3,
           confetti: minExplosiveConfetti,
           type: type,
+          collect: function() {
+            for (let i = 0; i < this.confetti * explosiveConfettiMult; i++) {
+              main.particles.push({
+                x: this.x,
+                y: this.y,
+                xVelocity: Math.trunc(Math.random() * 140 - 70),
+                yVelocity: Math.trunc(Math.random() * 140 - 70),
+                friction: 0,
+                lifespan: Math.trunc((.4 + Math.random() * .4) * FPS * explosiveLifetimeMult),
+                color: "orange",
+                isCollector: true,
+                movementIsCrucial: true,
+                onDeath: () => { points += pointsMult },
+              });
+            }
+            
+            main.specialTargets.splice(main.specialTargets.indexOf(this), 1);
+          }
         };
 
-        specialTargets.push(newTarget);
+        main.specialTargets.push(newTarget);
       } else if (type == "gold") {
         const newTarget = {
-          x: Math.trunc(Math.random() * canvas.width),
-          y: Math.trunc(Math.random() * canvas.height),
+          x: x ? x : Math.trunc(Math.random() * canvas.width),
+          y: y ? y : Math.trunc(Math.random() * canvas.height),
           size: Math.random() * goldTargetSize / 2 + goldTargetSize,
           color: "gold",
           stroke: "#E0B600",
-          strokeSize: 3, 
+          strokeSize: 3,
           confetti: 0,
           type: type,
+          collect: function(parentArray = main.specialTargets) {
+            this.size -= goldTargetDecay;
+    
+            const maxVelo = 25 + 4 * goldTargetDrop;
+            for (let i = 0; i < goldTargetDrop; i++) {
+              main.particles.push({
+                x: this.x,
+                y: this.y,
+                xVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
+                yVelocity: Math.trunc(Math.random() * maxVelo - maxVelo / 2),
+                friction: 1,
+                lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
+                color: this.color,
+                onDeath: () => { points += 10 * pointsMult; },
+              });
+            }
+
+            if (this.size < goldTargetMinSize) {
+              parentArray.splice(parentArray.indexOf(this), 1);
+            }
+          }
         };
 
-        specialTargets.push(newTarget);
+        main.specialTargets.push(newTarget);
       } else if (type == "rain") {
         const newTarget = {
           x: Math.trunc(Math.random() * canvas.width),
@@ -1279,9 +2179,44 @@
           color: "#6495ED84",
           confetti: 50,
           type: type,
+          collect: function() {
+            // start rain
+            if (!rainDuration) {
+              rainIntensity = Math.random() * .5 + .5;
+              rainSpeed = Math.random() * 10 + 20 * rainIntensity;
+              rainAngle = Math.random() * 4 - 2;
+              rainAmount = Math.ceil(Math.random() * 4 * rainIntensity);
+            }
+            rainDuration = 3600;
+
+            // water plots
+            for (let i = 0; i < gardenPlots.length; i++) {
+              const plot = gardenPlots[i];
+              plot.wetness = Math.trunc(Math.random() * wetRandRange + minWetness);
+            }
+            world.areas["farmers market"].items.find(e => e.id == "water plot").refresh();
+
+            if (showDrops) {
+              // begin target-collection splash effect
+              for (let i = 0; i < this.confetti; i++) {
+                world.areas["garden"].particles.push({
+                  x: this.x,
+                  y: this.y,
+                  xVelocity: Math.trunc(Math.random() * 40 - 20),
+                  yVelocity: Math.trunc(Math.random() * 40 - 20),
+                  friction: 1,
+                  lifespan: Math.trunc((.1 + Math.random() / 4) * FPS),
+                  color: this.color,
+                  isCosmetic: true,
+                });
+              }
+            }
+
+            garden.specialTargets.splice(garden.specialTargets.indexOf(this), 1);
+          }
         };
 
-        gardenTargets.push(newTarget);
+        garden.specialTargets.push(newTarget);
       }
     }
 
@@ -1301,305 +2236,265 @@
     }
 
     const collectTarget = target => {
-      const drops = target.confetti + particleBase;
-      console.log(drops)
-      for (let i = 0; i < drops; i++) {
-        particles.push({
-          x: target.x,
-          y: target.y,
-          xVelocity: Math.trunc(Math.random() * (drops / 3 + 18) - (drops / 6 + 9)),
-          yVelocity: Math.trunc(Math.random() * (drops / 3 + 18) - (drops / 6 + 9)),
-          friction: 1,
-          lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
-          color: target.color,
-          onDeath: () => { points += 1 * pointsMult },
-        });
+      const main = world.areas["main"];
+      const garden = world.areas["garden"];
+      target.collect();
+
+      if (target.type == "gold" && goldAutoCollect) {
+          main.autoTargets.push(
+            ...main.specialTargets.splice(main.specialTargets.indexOf(target), 1)
+          );
+
+      } else if (target.type == "rain") {        
+        garden.specialTargets.splice(garden.specialTargets.indexOf(target), 1);
       }
-
-      targets.splice(targets.indexOf(target), 1);
-    }
-
-    const collectSpecialTarget = target => {
-      if (target.type == "dark") {
-        const maxVelo = 25 + darkTargetConfettiMult * 2;
-        for (let i = 0; i < target.confetti; i++) {
-          // spawn particles that become new generic targets
-          particles.push({
-            x: target.x,
-            y: target.y,
-            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            friction: 1,
-            lifespan: Math.trunc((2 + Math.random()) / 2 * FPS),
-            color: target.color,
-            onDeath: function () { spawnTarget(this.x, this.y) },
-          });
-        }
-      } else if (target.type == "explosive") {
-        // spawn many high velocity particles
-        for (let i = 0; i < target.confetti * explosiveConfettiMult; i++) {
-          particles.push({
-            x: target.x,
-            y: target.y,
-            xVelocity: Math.trunc(Math.random() * 140 - 70),
-            yVelocity: Math.trunc(Math.random() * 140 - 70),
-            friction: 0,
-            lifespan: Math.trunc((.4 + Math.random() * .4) * FPS * explosiveLifetimeMult),
-            color: "orange",
-            isCollector: true,
-            onDeath: () => { points += 1 * pointsMult },
-          });
-        }
-      } else if (target.type == "gold") {
-        // spawn high value particles on contact
-        target.size -= goldTargetDecay;
-
-        if (goldAutoCollect) {
-          autoCollectTargets.push(target);
-          specialTargets.splice(specialTargets.indexOf(target), 1);
-        }
-
-        const maxVelo = 8 * goldTargetDrop;
-        for (let i = 0; i < goldTargetDrop; i++) {
-          particles.push({
-            x: target.x,
-            y: target.y,
-            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            friction: 1,
-            lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
-            color: target.color,
-            onDeath: () => {
-              points += 5 * pointsMult;
-            },
-          });
-        }
-
-        if (target.size < goldTargetMinSize) specialTargets.splice(specialTargets.indexOf(target), 1);
-      }
-
-      if (target.type == "gold") return;
-      specialTargets.splice(specialTargets.indexOf(target), 1);
-    }
-
-    const collectGardenTarget = target => {
-      if (target.type == "rain") {
-        // start rain
-        if (!rainDuration) {
-          rainIntensity = Math.random() * .5 + .5;
-          rainSpeed = Math.random() * 10 + 20 * rainIntensity;
-          rainAngle = Math.random() * 4 - 2;
-          rainAmount = Math.ceil(Math.random() * 5 * rainIntensity);
-        }
-        rainDuration = 3600;
-
-        // water plots
-        for (let i = 0; i < gardenPlots.length; i++) {
-          const plot = gardenPlots[i];
-          plot.isWet = true;
-          plot.wetLifespan = Math.trunc(Math.random() * wetRandRange + minWetLifespan);
-        }
-        farmersMarketItems.find(e=>e.id == "water plot").refresh();
-
-        // begin target-collection splash effect 
-        for (let i = 0; i < target.confetti; i++) {
-          gardenParticles.push({
-            x: target.x,
-            y: target.y,
-            xVelocity: Math.trunc(Math.random() * 40 - 20),
-            yVelocity: Math.trunc(Math.random() * 40 - 20),
-            friction: 1,
-            lifespan: Math.trunc((.1 + Math.random() / 4) * FPS),
-            color: target.color,
-            isCosmetic: true,
-          });
-        }
-      }
-      gardenTargets.splice(gardenTargets.indexOf(target), 1);
     }
 
     const doAutoCollection = () => {
-      for (let i = 0; i < autoCollectTargets.length; i++) {
-        const target = autoCollectTargets[i];
+      for (let i = 0; i < Object.keys(world.areas).length; i++) {
+        const targetArray = world.areas[Object.keys(world.areas)[i]].autoTargets;
+        
+        if (!targetArray) continue;
 
-        if (target.type == "gold") {
-          target.size -= goldTargetDecay;
-
-          const maxVelo = 8 * goldTargetDrop;
-          for (let i = 0; i < goldTargetDrop; i++) {
-            particles.push({
-              x: target.x,
-              y: target.y,
-              xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-              yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-              friction: 1,
-              lifespan: Math.trunc((normalParticleTime + Math.random() * normalParticleTime / 2) * FPS),
-              color: target.color,
-              onDeath: () => {
-                points += 5 * pointsMult;
-              },
-            });
-          }
-
-          if (target.size < goldTargetMinSize) autoCollectTargets.splice(autoCollectTargets.indexOf(target), 1);
+        for (let j = 0; j < targetArray.length; j++) {
+          targetArray[j].collect(targetArray);
         }
       }
     }
     //#endregion
 
-    //#region utility functions
-    const randoColor = strength => {
+    //#region utility 
+    function addVectors(v1, v2) {
+      const p1 = v1.toPoint();
+      const p2 = v2.toPoint();
+      const resultPoint = new Point(p1.x + p2.x, p1.y + p2.y);
+  
+      return Vector.fromPoints(new Point(0, 0), resultPoint);
+    }
+    function subtractVectors(v1, v2) {
+      const p1 = v1.toPoint();
+      const p2 = v2.toPoint();
+      const resultPoint = new Point(p1.x - p2.x, p1.y - p2.y);
+      return Vector.fromPoints(new Point(0, 0), resultPoint);
+    }
+        
+    const randomTargetColor = strength => {
       const h = Math.floor(Math.random() * 256);
       const s = Math.trunc(strength * 100);
       const l = 50;
       const a = Math.max(strength.toFixed(2), .3);
       return `hsla(${h}, ${s}%, ${l}%, ${a})`;
     }
+    
+    const randomSign = () => {
+      return Math.random() < 0.5 ? -1 : 1;
+    }
     //#endregion
 
-    const drawCurrencies = startHeight => {
-      ctx.textAlign = "center";
-      if (gardenIsUnlocked) {
-        startHeight -= 20
-        ctx.strokeText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
-        ctx.fillText(`Seeds: ${seeds}`, canvas.width / 2, startHeight + 20);
+    const showTooltip = item => {
+      const tooltip = document.getElementById("tooltip");
+
+      tooltip.innerText = item.tooltip;
+      tooltip.style.transitionDelay = "200ms";
+      tooltip.style.opacity = 1
+    }
+    const hideTooltip = () => {
+      const tooltip = document.getElementById("tooltip");
+      tooltip.style.transitionDelay = "0ms";
+      tooltip.style.opacity = 0;
+    }
+    
+    const drawText = () => {
+      // general styles
+      ctx.fillStyle = "black";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255, 255, 255, .95)";
+
+      if (showVersionCode) {
+        ctx.font = "18px serif";
+        ctx.textAlign = "right";
+        ctx.fillText(version, canvas.width - 20, canvas.height - 20);
       }
 
-      ctx.strokeText(`Points: ${points}`, canvas.width / 2, startHeight);
-      ctx.fillText(`Points: ${points}`, canvas.width / 2, startHeight);
+      if (showCurrency) {
+        ctx.font = "22px arial";
+        ctx.textAlign = "left";
+        
+        const ptText = `Points: ${points}`;
+        ctx.strokeText(ptText, 20, 30);
+        ctx.fillText(ptText, 20, 30);
+
+        if (world.areas["garden"].unlocked) {
+          const seedText = `Seeds: ${seeds}`;
+          ctx.strokeText(seedText, 20, 54);
+          ctx.fillText(seedText, 20, 54);
+        }
+      }
     }
 
-    const drawText = () => {
-      ctx.fillStyle = "black";
+    const drawDoors = () => {
       ctx.lineWidth = 3;
       ctx.strokeStyle = "white";
       ctx.font = "18px serif";
 
-      ctx.textAlign = "left";
-      ctx.fillText(version, 10, 20);
+      const theseDoors = world.areas[scene].doors.filter(door => world.areas[door.destination].unlocked);
+      for (let i = 0; i < theseDoors.length; i++) {
+        const door = theseDoors[i];
 
-      const primaryScenes = Object.keys(sceneDoors);
-      const secondaryScenes = Object.values(sceneDoors);
-      const sceneIsPrimary = secondaryScenes.indexOf(scene) < 0;
-      const rightScene = sceneIsPrimary ? primaryScenes[(primaryScenes.indexOf(scene) + 1) % primaryScenes.length] : secondaryScenes[(secondaryScenes.indexOf(scene) + 1) % secondaryScenes.length];
-      const leftScene = sceneIsPrimary ? primaryScenes[Math.abs(primaryScenes.indexOf(scene) - 1) % primaryScenes.length] : secondaryScenes[Math.abs(secondaryScenes.indexOf(scene) - 1) % secondaryScenes.length];
+        ctx.fillStyle = "black";
+        ctx.textAlign = "center";
+        
+        if (door.side == "right") {
+          const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
 
-      if (primaryScenes.length > 1) {
-        // draw right label
-        ctx.textAlign = "right";
-        ctx.strokeText(`${rightScene} 🡆`, canvas.width - 20, canvas.height / 2);
-        ctx.fillText(`${rightScene} 🡆`, canvas.width - 20, canvas.height / 2);
+          if (showDoorLabel) {
+            ctx.textAlign = "right";
+            ctx.strokeText(`${door.destination} ▸`, canvas.width - 20, doorPosition);
+            ctx.fillText(`${door.destination} ▸`, canvas.width - 20, doorPosition);
+          }
 
-        // draw left label
-        ctx.textAlign = "left";
-        ctx.strokeText(`🡄 ${leftScene}`, 20, canvas.height / 2);
-        ctx.fillText(`🡄 ${leftScene}`, 20, canvas.height / 2);
+          if (showDoorway) {
+            ctx.fillStyle = doorColor;
+            ctx.fillRect(canvas.width, doorPosition - doorSize, -5, doorSize * 2);
+          }
+        } else if (door.side == "left") {
+          const doorPosition = door.position ? canvas.height * door.position : canvas.height / 2;
+
+          if (showDoorLabel) {
+            ctx.textAlign = "left";
+            ctx.strokeText(`◂ ${door.destination}`, 20, doorPosition);
+            ctx.fillText(`◂ ${door.destination}`, 20, doorPosition);
+          }
+
+          if (showDoorway) {
+            ctx.fillStyle = doorColor;
+            ctx.fillRect(0, doorPosition - doorSize, 5, doorSize * 2);
+          }
+        }
+        if (door.side == "top") {
+          const doorPosition = door.position ? canvas.width * door.position : canvas.width / 2;
+
+          if (showDoorLabel) {
+            ctx.strokeText("▴", doorPosition, 20);
+            ctx.fillText("▴", doorPosition, 20);
+            ctx.strokeText(door.destination, doorPosition, 35);
+            ctx.fillText(door.destination, doorPosition, 35);
+          }
+
+          if (showDoorway) {
+            ctx.fillStyle = doorColor;
+            ctx.fillRect(doorPosition - doorSize, 0, doorSize * 2, 5);
+          }
+        } else if (door.side == "bottom") {
+          const doorPosition = (door.position ? canvas.width * door.position : canvas.width / 2);
+
+          if (showDoorLabel) {
+            ctx.textAlign = "bottom";
+            ctx.strokeText("▾", doorPosition, canvas.height - 20);
+            ctx.fillText("▾", doorPosition, canvas.height - 20);
+            ctx.strokeText(door.destination, doorPosition, canvas.height - 35);
+            ctx.fillText(door.destination, doorPosition, canvas.height - 35);
+          }
+
+          if (showDoorway) {
+            ctx.fillStyle = doorColor;
+            ctx.fillRect(doorPosition - doorSize, canvas.height, doorSize * 2,  -5);
+          }
+        }
       }
+    }
+    const randomEvents = deltaT => {
+      const main = world.areas["main"];
+      // main targets
+      if (Math.random() < targetChance * deltaT && main.targets.length < maxTargets) spawnTarget();
+      if (darkTargetUnlocked && Math.random() < (strictTargetAmountLimit ? darkTargetChance * deltaT : darkTargetChance * deltaT / 2) * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets && main.targets.length < Math.max(safeMaxTargets, maxTargets + 10)) spawnTarget(null, null, "dark");
+      if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * deltaT * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "explosive");
+      if (goldTargetUnlocked && Math.random() < goldTargetChance * deltaT * specialTargetRateMult && main.specialTargets.length < maxSpecialTargets) spawnTarget(null, null, "gold");
 
-      const upperScene = primaryScenes.find(key => sceneDoors[key] === scene);
-      ctx.textAlign = "center";
-      if (sceneDoors[scene]) { // draw bottom label
-        drawCurrencies(45);
-
-        ctx.strokeText("🡇", canvas.width / 2, canvas.height - 15);
-        ctx.fillText("🡇", canvas.width / 2, canvas.height - 15);
-        ctx.strokeText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
-        ctx.fillText(sceneDoors[scene], canvas.width / 2, canvas.height - 35);
-      } else if (upperScene) { // draw top label
-        drawCurrencies(canvas.height - 20);
-
-        ctx.strokeText("🡅", canvas.width / 2, 20);
-        ctx.fillText("🡅", canvas.width / 2, 20);
-        ctx.strokeText(upperScene, canvas.width / 2, 35);
-        ctx.fillText(upperScene, canvas.width / 2, 35);
-      }
-
-      const mainTextWidth = 55;
-      const shopTextWidth = 55;
-      const gardenTextWidth = 65;
+      // garden targets
+      if (rainUnlocked && Math.random() < rainTargetChance * deltaT && world.areas["garden"].specialTargets.length < maxGardenSpecialTargets) spawnTarget(null, null, "rain");
     }
 
-    const randomEvents = () => {
-      // target appears
-      if (Math.random() < targetChance && targets.length < maxTargets) spawnTarget();
-
-      // dark target appears
-      if (darkTargetUnlocked && Math.random() < darkTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("dark");
-      // explosive target appears
-      if (explosiveTargetUnlocked && Math.random() < explosiveTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("explosive");
-      // gold target appears
-      if (goldTargetUnlocked && Math.random() < goldTargetChance * specialTargetRateMult && specialTargets.length < maxSpecialTargets) spawnSpecialTarget("gold");
-
-      // rain target appears
-      if (rainUnlocked && Math.random() < rainTargetChance && gardenTargets.length < maxGardenTargets) spawnSpecialTarget("rain");
-    }
-
-    const spawnRain = () => {
+    const spawnRain = deltaT => {
       for (let i = 0; i < rainAmount; i++) {
-        gardenParticles.push({
-          x: Math.random() * (canvas.width + 60) - 30,
+        world.areas["garden"].particles.push({
+          x: Math.random() * (canvas.width + canvas.width * .1) - canvas.width * .05,
           y: 0,
           xVelocity: rainAngle,
           yVelocity: rainSpeed,
           friction: 0,
-          lifespan: (Math.random() * (canvas.height * 1.25 / rainSpeed / 60)) * FPS,
+          lifespan: (Math.random() * (canvas.height * 1.25 / rainSpeed / FPS)) * FPS,
           color: "#6495ED84",
           ignoreWalls: true,
-          isCosmetic: true,
+          type: "rain",
+          onDeath: function () { 
+            world.areas["garden"].particles.push({
+              x: this.x,
+              y: this.y,
+              xVelocity: 0,
+              yVelocity: 0,
+              friction: 0,
+              lifespan: .4 * FPS,
+              maxLifespan: .4 * FPS,
+              hue: 230,
+              saturation: 55,
+              lightness: 40,
+              startingTransparency: .2,
+              size: 10,
+              fadeToTransparent: true,
+              ignoreWalls: true,
+              type: "rain",
+            })
+          },
         });
       }
-      
+
       rainDuration -= 1;
     }
-    
-    const update = () => {
-      movePlayer();
-      moveParticles();
-      randomEvents();
-      
-      growCrops();
+
+    const update = deltaT => {
+      checkGamepadInputs();
+
+      movePlayer(deltaT);
+      moveParticles(deltaT);
+      randomEvents(deltaT);
+
+      growCrops(deltaT);
       if (!rainDuration) {
         updateGardenWetness();
-      } else if (scene == "garden") {
-        spawnRain();
+      } else if (showRain && scene == "garden") {
+        spawnRain(deltaT);
       }
 
-      doCollisions(player, scene);
+      doCollisions(player, world.areas[scene]);
+      doItemCollisions();
 
-      if (shopFocus) detectPurchase();
+      if (shopFocus) {
+        detectPurchase();
+      } else {
+        controller.interact = false;
+      }
 
       doAutoCollection();
+      if (world.areas[scene].items) updateShopPositions(world.areas[scene].items);
     }
 
     const render = () => {
-      if (scene == "garden" || scene == "farmers market") canvas.style.backgroundColor = "rgb(200, 255, 200)";
-      else if (scene == "shop") canvas.style.backgroundColor = "rgb(240, 225, 200)";
-      else canvas.style.backgroundColor = "white";
+      const area = world.areas[scene];
+
+      canvas.style.backgroundColor = area.color;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      if (Object.values(sceneDoors).includes(scene)) {
-        let currentShopArray;
-        if (scene == "shop") {
-          currentShopArray = shopItems;
-        } else if (scene == "farmers market") {
-          currentShopArray = farmersMarketItems;
-        }
-
-        updateShopPositions(currentShopArray);
-        drawShopItems(currentShopArray);
-      } else if (Object.keys(sceneDoors).includes(scene)) {
-        if (scene == "main") {
-          drawTargets(targets);
-          drawTargets(specialTargets);
-          drawTargets(autoCollectTargets);
-        } else if (scene == "garden") {
-          drawGardenPlots();
-          drawTargets(gardenTargets);
-        }
-      }
+      if (scene == "garden") drawGardenPlots();
+      
+      if (area.items) drawShopItems(area.items);
+      if (area.targets && showNormalTargets) drawTargets(area.targets);
+      if (area.specialTargets && showSpecialTargets) drawTargets(area.specialTargets);
+      if (area.autoTargets && showSpecialTargets) drawTargets(area.autoTargets);
 
       drawParticles();
       drawText();
+      if (showDoorLabel || showDoorway) drawDoors();
       drawPlayer();
 
       if (shopFocus) {
@@ -1612,7 +2507,7 @@
 
     const harvestCrop = crop => {
       for (let i = 0; i < crop.confetti + cropHarvestBonus; i++) {
-        gardenParticles.push({
+        world.areas["garden"].particles.push({
           x: crop.x,
           y: crop.y,
           xVelocity: Math.trunc(Math.random() * 14 - 7),
@@ -1624,10 +2519,10 @@
         });
       }
 
-      crop.growth = null;
+      crop.growth = 0;
     }
 
-    const growCrops = () => {
+    const growCrops = deltaT => {
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
 
@@ -1637,7 +2532,7 @@
           for (let k = 0; k < strip.length; k++) {
             const crop = strip[k];
 
-            if (crop.growth < 1 && Math.random() < cropGrowthChance) crop.growth = Math.min(crop.growth + .1 + (plot.isFertile ? .1 : 0) + (plot.isWet ? .1 : 0), 1);
+            if (crop.growth < 1 && Math.random() < cropGrowthChance * deltaT) crop.growth = Math.min(crop.growth + .1 + (plot.fertility ? .15 : 0) + (plot.wetness ? .1 : 0), 1);
           }
         }
       }
@@ -1646,17 +2541,14 @@
     const updateGardenWetness = () => {
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
-        
-        plot.wetLifespan -= 1;
-        if (plot.wetLifespan < 1) {
-          plot.isWet = false;
-          farmersMarketItems.find(e=>e.id == "water plot").refresh();
-        }
+
+        // if not zero, -1, then, if zero, update shop item
+        if (plot.wetness && !--plot.wetness) farmersMarketItems.find(e => e.id == "water plot").refresh();
       }
     }
 
+    const gardenPadding = 100;
     const drawGardenPlots = () => {
-      const gardenPadding = 100;
       const plotLength = 250;
       const plotHeight = 200;
 
@@ -1676,7 +2568,7 @@
       // draw plot
       for (let i = 0; i < gardenPlots.length; i++) {
         const plot = gardenPlots[i];
-        const plotColor = `hsl(36, 39%, ${60 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+        const plotColor = `hsl(36, 39%, ${60 - (plot.fertility ? 15 : 0) - (plot.wetness ? 15 : 0)}%)`;
         const gardenGridX = i % plotsPerGridRow;
         const gardenGridY = Math.floor(i / plotsPerGridRow);
 
@@ -1690,7 +2582,7 @@
         for (let j = 0; j < plot.strips.length; j++) {
           const strip = plot.strips[j];
 
-          const stripColor = `hsl(36, 39%, ${50 - (plot.isFertile ? 15 : 0) - (plot.isWet ? 15 : 0)}%)`;
+          const stripColor = `hsl(36, 39%, ${50 - (plot.fertility ? 15 : 0) - (plot.wetness ? 15 : 0)}%)`;
 
           const stripX = plot.x + plotPadding;
           const stripY = plot.y + plotPadding + j * stripHeight + j * plotPadding;
@@ -1722,26 +2614,37 @@
     }
 
     const detectPurchase = () => {
-      if (keys["e"]) {
+      if (!controller.interact || (player.movement.magnitude && useTouchController && userHasTouchScreen)) return;
+      const area = world.areas[scene];
+
+      if (scene == "settings") {
+        shopFocus.onPurchase();
+      } else {
         shopFocus.level += 1;
         points -= shopFocus.price;
         if (shopFocus.seedPrice) seeds -= shopFocus.seedPrice;
         shopFocus.onPurchase();
 
-        const maxVelo = 2 * shopFocus.level + 10;
-        for (let i = 0; i < Math.min(7 * shopFocus.level, 100); i++) {
-          shopParticles.push({
-            x: shopFocus.x,
-            y: shopFocus.y,
-            xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
-            friction: 1,
-            lifespan: Math.trunc((.25 + Math.random() * .25) * FPS),
-            color: shopFocus.level == shopFocus.maxLevel ? "gold" : "rgb(0, 200, 0)",
-          });
+        if (showCosmeticParticles) {
+          const drops = Math.floor((shopFocus.level == shopFocus.maxLevel ? Math.min(25 * shopFocus.level, 150) : Math.min(7 * shopFocus.level, 100)) / (showCosmeticParticles == 1 ? 3 : 1));
+          const maxVelo = drops / 8 + 10;
+          for (let i = 0; i < drops; i++) {
+            area.particles.push({
+              x: shopFocus.x,
+              y: shopFocus.y,
+              xVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+              yVelocity: Math.trunc(Math.random() * maxVelo * 2 - maxVelo),
+              friction: 1,
+              lifespan: Math.trunc((.25 + Math.random() * .25) * FPS),
+              color: shopFocus.level == shopFocus.maxLevel ? "hsl(47, 100%, 50%)" : "rgb(0, 200, 0)",
+              isCosmetic: true,
+            });
+          }
         }
-        keys["e"] = false;
       }
+
+      updateShopPositions(area.items);
+      controller.interact = false;
     }
 
     const drawPurchaseButton = () => {
@@ -1750,60 +2653,65 @@
       if (ctx.fillStyle != "lime") ctx.fillStyle = "lime";
       if (ctx.lineWidth != 3) ctx.lineWidth = 3;
       if (ctx.strokeStyle != "black") ctx.strokeStyle = "black";
-      ctx.strokeText("E", player.x, player.y - 50);
-      ctx.fillText("E", player.x, player.y - 50);
+      ctx.strokeText(interactionMessage, player.x, player.y - 50);
+      ctx.fillText(interactionMessage, player.x, player.y - 50);
     }
 
     const updateShopPositions = itemArray => {
-      const unlockedItems = itemArray.filter(e => e.unlocked);
+      itemArray = itemArray.filter(item => item.unlocked);
       const shopItemsPerRow = 5;
       const shopRows = 4;
-      const shopPadding = 3 * shopButtonSize;
-      const rowGap = (canvas.height - shopPadding * 2 - shopRows * shopButtonSize) / shopRows;
-      const colGap = (canvas.width - shopPadding * 2 - shopItemsPerRow * shopButtonSize) / (shopItemsPerRow - 1);
+      const shopPadding = 3 * itemButtonSize;
+      const rowGap = (canvas.height - shopPadding * 2 - shopRows * itemButtonSize) / (shopRows - 1);
+      const colGap = (canvas.width - shopPadding * 2 - shopItemsPerRow * itemButtonSize) / (shopItemsPerRow - 1);
 
-      for (let i = 0; i < unlockedItems.length; i++) {
-        const item = unlockedItems[i];
-        if (!item.unlocked) continue;
+      for (let i = 0; i < itemArray.length; i++) {
+        const item = itemArray[i];
 
         const row = Math.floor(i / shopItemsPerRow) + 1;
         const col = i % shopItemsPerRow + 1;
 
-        item.x = shopPadding + (col - 1) * shopButtonSize + (col - 1) * colGap + 20;
-        item.y = shopPadding + (row - 1) * shopButtonSize + (row - 1) * rowGap;
+        item.x = shopPadding + (col - 1) * itemButtonSize + (col - 1) * colGap + itemButtonSize / 2;
+        item.y = shopPadding + (row - 1) * itemButtonSize + (row - 1) * rowGap + itemButtonSize / 2;
       }
     }
 
     const drawShopItems = itemArray => {
-      const unlockedItems = itemArray.filter(e => e.unlocked);
+      itemArray = itemArray.filter(item => item.unlocked);
 
-      for (let i = 0; i < unlockedItems.length; i++) {
-        const item = unlockedItems[i]
+      for (let i = 0; i < itemArray.length; i++) {
+        const item = itemArray[i]
 
         // draw button
-        if (item.level === item.maxLevel) {
-          ctx.fillStyle = "gold";
+        if (item.color) {
+          ctx.fillStyle = item.color;
+        } else if (item.level === item.maxLevel) {
+          ctx.fillStyle = "hsl(47, 100%, 50%)";
         } else if (item.price <= points && (item.seedPrice ? item.seedPrice <= seeds : true)) {
           ctx.fillStyle = "rgb(0, 200, 0)";
         } else {
           ctx.fillStyle = "rgb(200, 0, 0)";
         }
-        ctx.fillRect(item.x - shopButtonSize / 2, item.y - shopButtonSize / 2, shopButtonSize, shopButtonSize);
+        ctx.fillRect(item.x - itemButtonSize / 2, item.y - itemButtonSize / 2, itemButtonSize, itemButtonSize);
+        if (item.stroke) {
+          ctx.strokeStyle = item.stroke;
+          ctx.strokeRect(item.x - itemButtonSize / 2, item.y - itemButtonSize / 2, itemButtonSize, itemButtonSize);
+        }
 
         // draw "new!" badge
-        if (item.level == 0 && !item.purchasedBefore) {
+        if (scene != "settings" && item.level == 0 && !item.purchasedBefore) {
           ctx.font = "bold 20px sans-serif";
           ctx.textAlign = "center";
           ctx.fillStyle = purchaseIsValid(item) ? "rgb(200, 0, 0)" : "rgb(200, 0, 0)";
-          ctx.fillText("new!", item.x, item.y - shopButtonSize / 1.5);
+          ctx.fillText("new!", item.x, item.y - itemButtonSize / 1.5);
         }
 
         // draw item title
         ctx.font = "20px serif";
         ctx.fillStyle = "black";
         ctx.textAlign = "center";
-        const titleText = item.detail ? `${item.title} : ${item.detail}`: item.title;
-        ctx.fillText(titleText, item.x, item.y + shopButtonSize);
+        const titleText = item.title;
+        ctx.fillText(titleText, item.x, item.y + itemButtonSize);
 
         if (!(item.level < item.maxLevel)) continue;
 
@@ -1811,30 +2719,102 @@
         const tempStrings = [];
         if (item.price) tempStrings.push(`${item.price} points`);
         if (item.seedPrice) tempStrings.push(`${item.seedPrice} seeds`);
-        if (item.maxLevel && item.maxLevel > 1) tempStrings.push(`${item.level}/${item.maxLevel}`);
-        ctx.fillText(tempStrings.join(" : "), item.x, item.y + shopButtonSize + 20);
+        ctx.fillText(tempStrings.join(", "), item.x, item.y + itemButtonSize + 20);
       }
     }
     //#endregion
 
+    function checkGamepadInputs() {
+      const gamepads = navigator.getGamepads();
+      for (let i = 0; i < gamepads.length; i++) {
+        const gamepad = gamepads[i];
+        if (gamepad) {
+          gamepadVector = Vector.fromPoints(new Point(0, 0), new Point(gamepad.axes[0], gamepad.axes[1]));
+          gamepadVector.magnitude = gamepadVector.magnitude < gamepadJoystickDeadzone ? 0 : gamepadVector.magnitude;
+          controller.joystick = gamepadVector;
 
-    const gameLoop = () => {
-      const now = Date.now();
-      const deltaT = (now - lastFrameTime) / 1000; // seconds
-      lastFrameTime = now;
+          if (gamepad.buttons[0].pressed) {
+            if (gamepadCanInteract) {
+              controller.interact = true;
 
-      update();
+              gamepadCanInteract = false;
+              setTimeout(() => gamepadCanInteract = true, 240);
+            }
+          }
+        }
+      }
+    }
+    const gameLoop = timestamp => {
+      if (!lastFrameTime) lastFrameTime = timestamp;
+      const deltaT = FPS / (1000 / ((timestamp - lastFrameTime) || 1)); // seconds
+      lastFrameTime = timestamp;
+
+      update(deltaT);
       render();
-      setTimeout(gameLoop, 1000 / FPS);
+
+      requestAnimationFrame(gameLoop);
     }
 
-    let lastFrameTime = Date.now();
+    let lastFrameTime = null;
 
     // start the game with a few targets
     for (let i = 0; i < 5; i++) spawnTarget();
 
+    //#region scale the canvas to the screen
+    function scaleCanvas() {      
+      const scale = {
+        x: userHasTouchScreen ? window.outerWidth / canvas.width : window.innerWidth / canvas.width,
+        y: userHasTouchScreen ? window.outerHeight / canvas.height : window.innerHeight / canvas.height
+      }
+
+      const fitCanvasToScreenHeight = scale.x > scale.y;
+
+      // Apply scaling
+      if (fitCanvasToScreenHeight) {
+        canvas.style.transformOrigin = "top";
+        canvas.style.transform = `scale(${scale.y})`;
+      } else {
+        canvas.style.transformOrigin = "top";
+        canvas.style.transform = `scale(${scale.x})`;
+      }
+
+      const mult = Math.min(canvas.getBoundingClientRect().width / canvas.width, canvas.getBoundingClientRect().height / canvas.height)
+      const tooltip = document.getElementById("tooltip");
+      tooltip.style.fontSize = `${2 * mult}rem`;
+      tooltip.style.padding = `${2 * mult}rem`;
+    }
+    addEventListener("resize", ()=>{
+      userHasTouchScreen = navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
+
+      if (userHasTouchScreen)  {
+        unlockItems(settingsItems, "allow touch controls");
+        if (useTouchController) unlockItems(settingsItems, "controller size", "use joystick");
+      } else {
+        lockItems(settingsItems, "controller size", "allow touch controls", "use joystick");
+      }
+      
+      scaleCanvas();
+      updateTouchControllers(touchControllerSize());
+    });
+    //#endregion
+    
+    //#region initialization
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      points = 10000000000;
+      seeds = 10000000;
+    }
+    scaleCanvas();
     setupPlayerControls();
-    gameLoop();
+    requestAnimationFrame(gameLoop);
+
+    // warn against using portrait screen orientation
+    if (!screen.orientation.type.includes("landscape")) alert("This game is probably better in landscape orientation.");
+    screen.orientation.addEventListener("change", item => {
+      if (!screen.orientation.type.includes("landscape"))
+        alert("This game is probably better in landscape orientation.");
+    });
+    //#endregion
   </script>
 </body>
+
 </html>
